@@ -1,0 +1,71 @@
+'use strict';
+
+const mongoose = require('mongoose');
+const logger = require('../utils/logger');
+let MongoMemoryServer;
+try {
+  MongoMemoryServer = require('mongodb-memory-server').MongoMemoryServer;
+} catch (e) {
+  // Ignored in prod
+}
+
+const MONGO_OPTIONS = {
+  maxPoolSize: 100, // Increased for high concurrency
+  minPoolSize: 10,  // Increased for faster initial response
+  socketTimeoutMS: 45000,
+  serverSelectionTimeoutMS: 10000,
+  heartbeatFrequencyMS: 10000,
+  retryWrites: true,
+  w: 'majority',
+};
+
+
+let retryCount = 0;
+const MAX_RETRIES = 5;
+let memoryServer = null;
+
+const connectDB = async () => {
+  try {
+    let uri = process.env.MONGODB_URI;
+    const conn = await mongoose.connect(uri, MONGO_OPTIONS);
+    retryCount = 0;
+    logger.info(`mongodb connected succesfully (${conn.connection.host})`);
+  } catch (err) {
+    if (process.env.NODE_ENV !== 'production' && MongoMemoryServer) {
+        logger.warn(`Local MongoDB connection failed: ${err.message}. Initializing Memory Server fallback...`);
+        try {
+          await mongoose.disconnect(); // Clean state
+        } catch (e) {}
+        
+        if (!memoryServer) {
+            memoryServer = await MongoMemoryServer.create();
+            process.env.MONGODB_URI = memoryServer.getUri();
+        }
+        const conn = await mongoose.connect(process.env.MONGODB_URI, MONGO_OPTIONS);
+        logger.info(`MongoDB connected to fallback Memory Server at ${process.env.MONGODB_URI}`);
+        return;
+    }
+
+    retryCount += 1;
+    logger.error(`MongoDB connection error (attempt ${retryCount}): ${err.message}`);
+    if (retryCount < MAX_RETRIES) {
+      const delay = Math.min(1000 * 2 ** retryCount, 30000);
+      logger.info(`Retrying MongoDB connection in ${delay / 1000}s...`);
+      setTimeout(connectDB, delay);
+    } else {
+      logger.error('Max MongoDB retries reached. Exiting.');
+      process.exit(1);
+    }
+  }
+};
+
+mongoose.connection.on('disconnected', () => {
+  logger.warn('MongoDB disconnected. Attempting reconnect...');
+  if (!memoryServer) connectDB(); // Only auto-reconnect if not memory db
+});
+
+mongoose.connection.on('error', (err) => {
+  logger.error(`MongoDB error: ${err.message}`);
+});
+
+module.exports = connectDB;

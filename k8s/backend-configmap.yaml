@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  NODE_ENV: "production"
+  PORT: "5001"
+  MAX_CONNECTIONS: "100"
+  CLUSTER_MODE: "false"
+  ENABLE_RATE_LIMITING: "true"
+  RATE_LIMIT_WINDOW: "900000"
+  RATE_LIMIT_MAX_REQUESTS: "1000"
+  ENABLE_CORS: "true"
+  CORS_ORIGIN: "https://digitalclassroom.com"
+  ENABLE_COMPRESSION: "true"
+  ENABLE_MORGAN: "true"
+  MORGAN_ENABLED: "true"

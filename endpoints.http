@@ -1,0 +1,82 @@
+@baseUrl = http://localhost:5000
+@authToken = <paste JWT here>
+@sessionId = <paste sessionId here>
+@deviceId = postman_test_device
+
+### Health Check ---------------------------------
+GET {{baseUrl}}/health
+
+### Auth: Login / Send OTP -----------------------
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "teacher@example.com",
+  "role": "teacher"
+}
+
+### Auth: Verify OTP -----------------------------
+POST {{baseUrl}}/auth/verify-otp
+Content-Type: application/json
+
+{
+  "email": "teacher@example.com",
+  "otp": "123456",
+  "name": "Teacher Name"
+}
+
+### Current Auth User ----------------------------
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{authToken}}
+
+### Create Classroom -----------------------------
+POST {{baseUrl}}/classrooms
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "name": "Math 101",
+  "subject": "Mathematics",
+  "grade": "10th"
+}
+
+### Start Class Session --------------------------
+POST {{baseUrl}}/session/start
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "classroomId": "<classroomId>",
+  "title": "Algebra Lesson 1"
+}
+
+### Get Student Notes ----------------------------
+GET {{baseUrl}}/user/notes?page=1&limit=10
+Authorization: Bearer {{authToken}}
+
+### Sync Queue Push ------------------------------
+POST {{baseUrl}}/sync/push
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "operation": "page_create",
+      "sessionId": "{{sessionId}}",
+      "payload": "{\"pageNumber\": 1}",
+      "sequence": 1,
+      "clientTimestamp": "2024-03-24T10:00:00Z"
+    }
+  ]
+}
+
+### AI Chat (Teacher / Student limits) ------------
+POST {{baseUrl}}/ai/chat
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "prompt": "Explain Newton's First Law simply.",
+  "sessionId": "{{sessionId}}"
+}

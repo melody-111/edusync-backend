@@ -1,0 +1,118 @@
+'use strict';
+
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema(
+  {
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+    name: { type: String, required: true, trim: true },
+    avatar: { type: String, default: null },
+    role: {
+      type: String,
+      enum: ['teacher', 'student'],
+      required: true,
+      index: true,
+    },
+
+    // Auth methods
+    authProviders: {
+      google: {
+        googleId: { type: String, default: null },
+      },
+      local: {
+        passwordHash: { type: String, default: null },
+        otpSecret: { type: String, default: null },
+        otpExpiry: { type: Date, default: null },
+        lastOtpSentAt: { type: Date, default: null },
+      },
+    },
+
+    // Tokens
+    refreshToken: { type: String, default: null, select: false },
+
+    // Status
+    isActive: { type: Boolean, default: true },
+    isVerified: { type: Boolean, default: false },
+    lastLoginAt: { type: Date, default: null },
+    lastLoginIp: { type: String, default: null },
+
+    // AI usage tracking
+    aiUsageToday: { type: Number, default: 0 },
+    aiUsageResetAt: { type: Date, default: new Date() },
+
+    // Academic Profile (Added for Mobile App)
+    rollNumber: { type: String, trim: true, default: null },
+    semester: { type: String, trim: true, default: null },
+    year: { type: String, trim: true, default: null },
+    branch: { type: String, trim: true, default: null },
+    course: { type: String, trim: true, default: null },
+    gmail: { type: String, trim: true, default: null },
+    institutionType: { type: String, enum: ['school', 'college'], default: 'college' },
+    section: { type: String, trim: true, default: null },
+    subjectId: { type: String, trim: true, default: null }, // For teachers
+    subjectName: { type: String, trim: true, default: null }, // For teachers
+    
+    // QR Login Token (for scanning-to-login feature)
+    qrLoginToken: { type: String, unique: true, sparse: true, select: false },
+    lastQrRefreshAt: { type: Date, default: null },
+
+    // Push notification tokens
+    fcmTokens: [{ type: String }],
+
+    // Classroom Identification
+    deskId: { type: String, trim: true, sparse: true, index: true }, // Teacher's Desk ID
+    classroomId: { type: String, trim: true, index: true }, // Student's assigned classroom
+  },
+  {
+    timestamps: true,
+    toJSON: {
+      virtuals: true,
+      transform: (_, ret) => {
+        delete ret.__v;
+        delete ret.refreshToken;
+        if (ret.authProviders?.local) delete ret.authProviders.local.passwordHash;
+        return ret;
+      },
+    },
+  }
+);
+
+// ─── Instance Methods ─────────────────────────────────────────────────────────
+userSchema.methods.setPassword = async function (password) {
+  this.authProviders.local.passwordHash = await bcrypt.hash(password, 12);
+};
+
+userSchema.methods.verifyPassword = async function (password) {
+  if (!this.authProviders?.local?.passwordHash) return false;
+  return bcrypt.compare(password, this.authProviders.local.passwordHash);
+};
+
+userSchema.methods.toSafeObject = function () {
+  return {
+    _id: this._id,
+    email: this.email,
+    name: this.name,
+    avatar: this.avatar,
+    role: this.role,
+    deskId: this.deskId,
+    classroomId: this.classroomId,
+    isVerified: this.isVerified,
+    isActive: this.isActive,
+    lastLoginAt: this.lastLoginAt,
+    createdAt: this.createdAt,
+  };
+};
+
+// ─── Indexes ──────────────────────────────────────────────────────────────────
+userSchema.index({ 'authProviders.google.googleId': 1 }, { sparse: true });
+userSchema.index({ email: 1, role: 1 });
+
+module.exports = mongoose.model('User', userSchema);
