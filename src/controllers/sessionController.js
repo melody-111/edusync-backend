@@ -8,14 +8,12 @@ const Session = require('../models/Session');
 const SessionParticipant = require('../models/SessionParticipant');
 const Device = require('../models/Device');
 const AppControls = require('../models/AppControls');
-const File = require('../models/File');
 const MediaSession = require('../models/MediaSession');
 const { generateSessionQR, validateQRPayload } = require('../utils/qr');
 const { asyncHandler, sendSuccess, sendError } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
 const { cache } = require('../config/redis');
 const { triggerSavePipeline } = require('../services/savePipeline');
-const { notifyFreeStudyStudents } = require('./freeStudyController');
 const { addPdfJob } = require('../queues/pdfQueue');
 const { getSocketServer } = require('../socket/server');
 const logger = require('../utils/logger');
@@ -179,7 +177,7 @@ const startSelfSession = asyncHandler(async (req, res) => {
 
   const sessionId = uuidv4();
   const roomId = `self_${uuidv4()}`;
-  const { qrToken, qrCodeDataUrl, qrPayload } = await generateSessionQR(sessionId);
+  const { qrToken, qrCodeDataUrl } = await generateSessionQR(sessionId);
 
 
   const session = await Session.create({
@@ -367,7 +365,7 @@ const joinSession = asyncHandler(async (req, res) => {
   }
 
   // Upsert participant
-  const participant = await SessionParticipant.findOneAndUpdate(
+  await SessionParticipant.findOneAndUpdate(
     { sessionId: session._id, userId: student._id },
     {
       role: 'student',
@@ -778,7 +776,7 @@ const saveSessionProgress = asyncHandler(async (req, res) => {
       await File.findByIdAndUpdate(session.fileId, { canvasData, lastAutoSavedAt: new Date() });
     } else {
       // New Class: save to linked folder (or default)
-      const newFile = await File.create({
+      await File.create({
         ownerId: user._id,
         ownerRole: user.role,
         fileType: 'note',

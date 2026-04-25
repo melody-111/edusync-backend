@@ -162,11 +162,11 @@ class MonitoringSystem {
   /**
    * Send alert to external service
    */
-  sendAlert(alert) {
+  sendAlert(_alert) {
     if (process.env.NODE_ENV === 'production') {
       // Integrate with PagerDuty, Slack, or other alerting services
       // Example: Send to Slack webhook
-      // this.sendToSlack(alert);
+      // this.sendToSlack(_alert);
       // Example: Send to PagerDuty
       // this.sendToPagerDuty(alert);
     }

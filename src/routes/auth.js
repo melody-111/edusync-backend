@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 
 const {
-  login, verifyOtp, qrLogin, getMe, updateProfile, refreshToken, logout,
+  login, loginWithPassword, verifyOtp, qrLogin, getMe, updateProfile, refreshToken, logout,
   googleAuth, googleCallback,
   getMyQrToken, regenerateQrToken, refreshQrToken,
   initTerminal, refreshTerminalQr, checkTerminalStatus, syncTerminal,
@@ -25,6 +25,9 @@ const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 // POST /auth/login — send OTP to email
 
 router.post('/login', authLimiter, loginValidation, validate, login);
+
+// POST /auth/login-password — login with email and password
+router.post('/login-password', authLimiter, validate, loginWithPassword);
 
 // POST /auth/verify-otp — verify OTP, get JWT tokens
 router.post('/verify-otp', otpLimiter, verifyOtpValidation, validate, verifyOtp);

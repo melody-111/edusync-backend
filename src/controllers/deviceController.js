@@ -1,8 +1,8 @@
 'use strict';
 
-const { body, param, query } = require('express-validator');
+const { body, param } = require('express-validator');
 const Device = require('../models/Device');
-const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
+const { asyncHandler, sendSuccess, sendError } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
 
 // ─── Register / Upsert Device ─────────────────────────────────────────────────

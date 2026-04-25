@@ -3,7 +3,7 @@
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const crypto = require('crypto');
-const { body, validationResult, query, param } = require('express-validator');
+const { body, validationResult, param } = require('express-validator');
 const logger = require('../utils/logger');
 
 // ─── Rate Limiting Configuration ───────────────────────────────────────────────

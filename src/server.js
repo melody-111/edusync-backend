@@ -7,24 +7,9 @@ const createApp = require('./app');
 const connectDB = require('./config/db');
 const { connectRedis } = require('./config/redis');
 const { initSocketServer } = require('./socket/server');
-const os = require('os');
 const logger = require('./utils/logger');
 
-// Get local IP address
-const getLocalIp = () => {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if ('IPv4' === iface.family && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return 'localhost';
-};
-
 const PORT = parseInt(process.env.PORT, 10) || 5000;
-const LOCAL_IP = getLocalIp();
 
 const start = async () => {
   // ─── Connect Infrastructure ────────────────────────────────────────────────

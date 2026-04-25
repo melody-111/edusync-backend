@@ -16,9 +16,7 @@ const {
   requestId, 
   generalLimiter, 
   authLimiter, 
-  otpLimiter,
-  ipWhitelist,
-  logSecurityEvent 
+  ipWhitelist
 } = require('./middleware/security');
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
@@ -87,6 +85,10 @@ const createApp = () => {
       'http://localhost:8081',
       'http://127.0.0.1:8081',
       'http://127.0.0.1:5001',
+      'http://192.168.18.114:8081',
+      'http://192.168.18.114:5001',
+      'http://192.168.18.109:8081',
+      'http://192.168.18.109:5001',
       process.env.MOBILE_APP_URL || 'capacitor://localhost',
     ],
     credentials: true,
@@ -150,7 +152,7 @@ const createApp = () => {
         const { pool: postgresPool } = require('./config/postgres');
         await postgresPool.query('SELECT 1');
         postgresStatus = 'connected';
-      } catch (error) {
+      } catch {
         postgresStatus = 'disconnected';
       }
     }

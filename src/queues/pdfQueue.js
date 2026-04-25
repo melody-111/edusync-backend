@@ -1,5 +1,4 @@
 const { Queue } = require('bullmq');
-const { createRedisClient } = require('../config/redis');
 
 // Initialize the PDF generation queue
 const pdfQueue = new Queue('pdf-generation', {

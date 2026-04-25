@@ -5,7 +5,7 @@ const logger = require('../utils/logger');
 let MongoMemoryServer;
 try {
   MongoMemoryServer = require('mongodb-memory-server').MongoMemoryServer;
-} catch (e) {
+} catch {
   // Ignored in prod
 }
 
@@ -35,13 +35,13 @@ const connectDB = async () => {
         logger.warn(`Local MongoDB connection failed: ${err.message}. Initializing Memory Server fallback...`);
         try {
           await mongoose.disconnect(); // Clean state
-        } catch (e) {}
+        } catch {}
         
         if (!memoryServer) {
             memoryServer = await MongoMemoryServer.create();
             process.env.MONGODB_URI = memoryServer.getUri();
         }
-        const conn = await mongoose.connect(process.env.MONGODB_URI, MONGO_OPTIONS);
+        await mongoose.connect(process.env.MONGODB_URI, MONGO_OPTIONS);
         logger.info(`MongoDB connected to fallback Memory Server at ${process.env.MONGODB_URI}`);
         return;
     }

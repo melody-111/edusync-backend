@@ -9,13 +9,11 @@ const fs = require('fs');
 
 const Session = require('../models/Session');
 const Page = require('../models/Page');
-const StrokeBatch = require('../models/StrokeBatch');
 const File = require('../models/File');
 const ExportedFile = require('../models/ExportedFile');
 const SessionParticipant = require('../models/SessionParticipant');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
-const { decompressStrokes } = require('../utils/compression');
 const { sendNotesEmail } = require('../utils/email');
 const { sendPushNotification } = require('../utils/push');
 const { strokeBatchBuffer } = require('../socket/strokeBuffer');

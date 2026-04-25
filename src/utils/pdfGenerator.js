@@ -96,7 +96,7 @@ class PDFGenerator {
       for (const line of lines) {
         if (currentY < 50) {
           // Add new page if needed
-          const newPage = pdfDoc.addPage([595.28, 841.89]);
+          pdfDoc.addPage([595.28, 841.89]);
           currentY = 800;
         }
         

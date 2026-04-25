@@ -15,7 +15,6 @@ const {
 } = require('../controllers/sessionController');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { apiLimiter } = require('../middleware/rateLimiter');
 const { auditMiddleware } = require('../utils/activityLogger');
 
 router.use(authenticate);

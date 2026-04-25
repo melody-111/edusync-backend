@@ -1,8 +1,7 @@
 'use strict';
 
-const { body } = require('express-validator');
 const Notification = require('../models/Notification');
-const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
+const { asyncHandler, sendSuccess, paginate } = require('../utils/helpers');
 
 // ─── Get Notifications ─────────────────────────────────────────────────────────
 const getNotifications = asyncHandler(async (req, res) => {

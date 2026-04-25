@@ -187,7 +187,7 @@ const generateImage = asyncHandler(async (req, res) => {
                 timeout: 60000,
             });
             imageUrl = fallbackResponse.data?.data?.[0]?.url;
-        } catch (fallbackErr) {
+        } catch {
             return sendError(res, 'AI Image generation failed. Please try again.', 503);
         }
     } else {

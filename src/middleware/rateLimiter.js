@@ -8,11 +8,14 @@ const { sendError } = require('../utils/helpers');
  * Supports Cloudflare IP headers automatically.
  */
 const createLimiter = (windowMs, max, message) => {
-  const isDev = process.env.NODE_ENV === 'development';
+  // Completely disable rate limiting for development/testing
+  if (process.env.DISABLE_RATE_LIMIT === 'true' || process.env.NODE_ENV === 'development') {
+    return (req, res, next) => next();
+  }
   
   return rateLimit({
-    windowMs: isDev ? 1000 : windowMs, // 1 second in dev for easier testing
-    max: isDev ? 1000 : max,           // High limit in dev
+    windowMs: windowMs,
+    max: max,
     standardHeaders: true,             // Return rate limit info in `RateLimit-*` headers
     legacyHeaders: false,              // Disable `X-RateLimit-*` headers
     handler: (req, res) => {

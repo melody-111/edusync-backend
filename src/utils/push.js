@@ -27,7 +27,7 @@ try {
   } else {
     logger.info('Firebase push notifications disabled (serviceAccountKey.json not found)');
   }
-} catch (error) {
+} catch {
   logger.info('Firebase push notifications disabled (Invalid serviceAccountKey.json)');
 }
 

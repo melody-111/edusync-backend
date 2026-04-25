@@ -10,7 +10,7 @@ const File = require('../models/File');
  * Processes 'generate-pdf' jobs from the queue
  */
 const pdfWorker = new Worker('pdf-generation', async (job) => {
-  const { sessionId, canvasData, ownerId, ownerRole, title } = job.data;
+  const { sessionId, title } = job.data;
   logger.info(`Starting PDF generation for job: ${job.id} (Session: ${sessionId})`);
 
   try {

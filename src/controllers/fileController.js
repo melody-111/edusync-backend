@@ -1,9 +1,5 @@
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
-const { body, param } = require('express-validator');
-
 const File = require('../models/File');
 const Page = require('../models/Page');
 const StrokeBatch = require('../models/StrokeBatch');

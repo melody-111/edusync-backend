@@ -30,19 +30,20 @@ const logActivity = async (data) => {
   try {
     // Fire and forget activity logging
     ActivityLog.create(data).catch(() => {});
-  } catch (err) {
+  } catch {
     // Ignore log failure
   }
 };
 
 // ─── Google OAuth Passport Config ─────────────────────────────────────────────
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL,
-    },
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5001/auth/google/callback',
+      },
     async (accessToken, refreshToken, profile, done) => {
       try {
         const email = profile.emails?.[0]?.value;
@@ -79,7 +80,8 @@ passport.use(
       }
     }
   )
-);
+  );
+}
 
 // ─── OTP Config ───────────────────────────────────────────────────────────────
 totp.options = { step: parseInt(process.env.OTP_STEP, 10) || 300, digits: 6 };
@@ -92,12 +94,54 @@ const generateOtp = () => {
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 /**
+ * POST /auth/login-password
+ * Accepts: { email, password }
+ * Returns: { accessToken, refreshToken, user }
+ */
+const loginWithPassword = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  const user = await User.findOne({ email: email.toLowerCase() });
+  if (!user) return sendError(res, 'Invalid email or password', 401);
+  if (!user.isActive) return sendError(res, 'Account disabled', 403);
+
+  const isValidPassword = await user.verifyPassword(password);
+  if (!isValidPassword) return sendError(res, 'Invalid email or password', 401);
+
+  user.lastLoginAt = new Date();
+  user.lastLoginIp = getClientIp(req);
+  await user.save();
+
+  const { accessToken, refreshToken } = generateTokenPair(user);
+
+  // Store refresh token hash
+  user.refreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+  await user.save({ validateBeforeSave: false });
+
+  logActivity({ userId: user._id, actorRole: user.role, action: 'auth.login', category: 'auth', ip: getClientIp(req) });
+
+  return sendSuccess(res, {
+    accessToken,
+    refreshToken,
+    user: user.toSafeObject(),
+  }, 'Login successful');
+});
+
+/**
  * POST /auth/login
  * Accepts: { email, role, name, rollNumber, course, branch, semester, year, section, institutionType, subjectId, subjectName, gmail }
- * Sends OTP to email
+ * Sends OTP to email or phone based on input
  */
 const login = asyncHandler(async (req, res) => {
   const { email, role, name, rollNumber, course, branch, semester, year, section, institutionType, subjectId, subjectName, gmail } = req.body;
+
+  // Detect if input is email or phone
+  const isEmail = email.includes('@');
+  const isPhone = /^\d{10}$/.test(email.replace(/[\s-]/g, ''));
+  
+  if (!isEmail && !isPhone) {
+    return sendError(res, 'Please enter a valid email or phone number', 400);
+  }
 
   let user = await User.findOne({ email: email.toLowerCase() });
 
@@ -128,6 +172,12 @@ const login = asyncHandler(async (req, res) => {
     }
 
     user = await User.create(userData);
+    
+    // Set password if provided
+    if (req.body.password) {
+      await user.setPassword(req.body.password);
+      await user.save({ validateBeforeSave: false });
+    }
   } else {
     // Update existing user with new profile data if provided
     if (name) user.name = name;
@@ -151,9 +201,18 @@ const login = asyncHandler(async (req, res) => {
   await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, otpExpiry);
 
   try {
-    await sendOtpEmail(user.email, otp, user.name);
-  } catch (emailErr) {
-    logger.error(`OTP email send failed: ${emailErr.message}`);
+    if (isEmail) {
+      await sendOtpEmail(user.email, otp, user.name);
+    } else if (isPhone) {
+      // TODO: Implement SMS sending using Twilio or similar service
+      // For now, log OTP to console for phone numbers in dev
+      logger.debug(`[DEV] OTP for phone ${email}: ${otp}`);
+      if (process.env.NODE_ENV === 'production') {
+        return sendError(res, 'SMS OTP not configured. Please use email.', 503);
+      }
+    }
+  } catch (err) {
+    logger.error(`OTP send failed: ${err.message}`);
     // In dev, log the OTP to console rather than failing
     if (process.env.NODE_ENV !== 'production') {
       logger.debug(`[DEV] OTP for ${email}: ${otp}`);
@@ -164,7 +223,8 @@ const login = asyncHandler(async (req, res) => {
 
   logActivity({ userId: user._id, actorRole: user.role, action: 'auth.otp.sent', category: 'auth', ip: getClientIp(req) });
 
-  return sendSuccess(res, { email: user.email, expiresInSeconds: otpExpiry }, 'OTP sent to your email');
+  const message = isEmail ? 'OTP sent to your email' : 'OTP sent to your phone';
+  return sendSuccess(res, { email: user.email, expiresInSeconds: otpExpiry }, message);
 });
 
 /**
@@ -183,8 +243,24 @@ const verifyOtp = asyncHandler(async (req, res) => {
   if (DEV_OTP_BYPASS && otp.toString() === DEV_OTP_CODE) {
     console.log('[DEV MODE] OTP bypassed with dev code:', DEV_OTP_CODE);
     // Find user by email since we're bypassing OTP
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return sendError(res, 'User not found. Please register first.', 404);
+    let user = await User.findOne({ email: email.toLowerCase() });
+    
+    // If user doesn't exist, create them for dev mode
+    if (!user) {
+      console.log('[DEV MODE] User not found, creating for dev bypass');
+      user = await User.create({
+        email: email.toLowerCase(),
+        name: email.split('@')[0],
+        role: 'student',
+        isVerified: true,
+        isActive: true,
+        branch: 'CS',
+        year: '3rd',
+        semester: '6',
+        classroomId: 'Class 1'
+      });
+    }
+    
     if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
     user.isVerified = true;
@@ -545,7 +621,7 @@ const initTerminal = asyncHandler(async (req, res) => {
   const ip = getClientIp(req);
   const EXPIRES_IN = 65; // 65 seconds (gives a buffer over 60s)
 
-  const terminal = await TerminalSession.create({
+  await TerminalSession.create({
     terminalId,
     qrToken,
     ipAddress: ip,
@@ -821,6 +897,7 @@ const check2FAStatus = asyncHandler(async (req, res) => {
 
 module.exports = {
   login,
+  loginWithPassword,
   verifyOtp,
   qrLogin,
   getMe,

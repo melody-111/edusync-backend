@@ -75,7 +75,7 @@ const authenticateSocket = async (socket, next) => {
       const User = require('../models/User');
       try {
         user = await User.findById(decoded.sub).lean();
-      } catch (e) {
+      } catch {
         return next(new Error('User not found'));
       }
       if (!user) return next(new Error('User not found'));
@@ -267,7 +267,7 @@ const initSocketServer = async (httpServer) => {
     });
 
     // ─── joinClass ─────────────────────────────────────────────────────────────
-    socket.on('joinClass', async ({ roomId, deviceId }) => {
+    socket.on('joinClass', async ({ roomId }) => {
       try {
         if (!roomId) return;
         
@@ -327,6 +327,13 @@ const initSocketServer = async (httpServer) => {
             seekTo: media.seekPositionSeconds,
           } : null,
           canvasData: currentCanvasState,
+        });
+
+        // Request current canvas state from teacher for new student
+        socket.to(roomId).emit('student-joined', {
+          socketId: socket.id,
+          userId,
+          user: { name: user.name, email: user.email, role: user.role }
         });
 
         // Notify others in room (teacher)

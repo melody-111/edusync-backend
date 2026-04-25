@@ -6,7 +6,7 @@ const { logSecurityEvent } = require('./security');
 /**
  * Global error handler — must be registered LAST in Express
  */
-const errorHandler = (err, req, res, next) => {
+const errorHandler = (err, req, res, _next) => {
   let statusCode = err.statusCode || err.status || 500;
   let message = err.message || 'Internal Server Error';
   let errorType = err.name || 'Error';

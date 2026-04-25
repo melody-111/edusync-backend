@@ -6,7 +6,7 @@ const pgPool = new Pool({
   idleTimeoutMillis: 30000,
 });
 
-pgPool.on('error', (err, client) => {
+pgPool.on('error', (err) => {
   console.error('Unexpected error on idle pg client', err);
 });
 
