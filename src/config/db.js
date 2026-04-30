@@ -23,12 +23,21 @@ const MONGO_OPTIONS = {
 let retryCount = 0;
 const MAX_RETRIES = 5;
 let memoryServer = null;
+let isConnecting = false;
 
 const connectDB = async () => {
+  if (isConnecting) {
+    logger.info('MongoDB connection already in progress, skipping...');
+    return;
+  }
+  
+  isConnecting = true;
+  
   try {
     let uri = process.env.MONGODB_URI;
     const conn = await mongoose.connect(uri, MONGO_OPTIONS);
     retryCount = 0;
+    isConnecting = false;
     logger.info(`mongodb connected succesfully (${conn.connection.host})`);
   } catch (err) {
     if (process.env.NODE_ENV !== 'production' && MongoMemoryServer) {
@@ -42,11 +51,13 @@ const connectDB = async () => {
             process.env.MONGODB_URI = memoryServer.getUri();
         }
         await mongoose.connect(process.env.MONGODB_URI, MONGO_OPTIONS);
+        isConnecting = false;
         logger.info(`MongoDB connected to fallback Memory Server at ${process.env.MONGODB_URI}`);
         return;
     }
 
     retryCount += 1;
+    isConnecting = false;
     logger.error(`MongoDB connection error (attempt ${retryCount}): ${err.message}`);
     if (retryCount < MAX_RETRIES) {
       const delay = Math.min(1000 * 2 ** retryCount, 30000);
@@ -61,7 +72,7 @@ const connectDB = async () => {
 
 mongoose.connection.on('disconnected', () => {
   logger.warn('MongoDB disconnected. Attempting reconnect...');
-  if (!memoryServer) connectDB(); // Only auto-reconnect if not memory db
+  if (!memoryServer && !isConnecting) connectDB(); // Only auto-reconnect if not memory db and not already connecting
 });
 
 mongoose.connection.on('error', (err) => {

@@ -4,31 +4,53 @@ const admin = require('firebase-admin');
 const logger = require('./logger');
 
 // Initialize Firebase Admin SDK
-// This requires a serviceAccountKey.json file in the root
-// For now, only initialize if the config exists
+// Supports both file-based and environment variable configuration
 let isInitialized = false;
 
 try {
-  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './serviceAccountKey.json';
-  
-  if (require('fs').existsSync(serviceAccountPath)) {
-    const serviceAccount = require(require('path').resolve(serviceAccountPath));
+  // Priority 1: Use environment variables for Firebase config
+  if (process.env.FIREBASE_PROJECT_ID && 
+      process.env.FIREBASE_CLIENT_EMAIL && 
+      process.env.FIREBASE_PRIVATE_KEY) {
     
-    // Check if it's the dummy file we created
-    if (serviceAccount.project_id === 'your-firebase-project-id') {
-      logger.info('Firebase push notifications disabled (Using dummy serviceAccountKey.json)');
-    } else {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      isInitialized = true;
-      logger.info('Firebase Admin initialized for iOS/Android Push Notifications');
-    }
-  } else {
-    logger.info('Firebase push notifications disabled (serviceAccountKey.json not found)');
+    const serviceAccount = {
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    };
+    
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    isInitialized = true;
+    logger.info('Firebase Admin initialized using environment variables');
   }
-} catch {
-  logger.info('Firebase push notifications disabled (Invalid serviceAccountKey.json)');
+  // Priority 2: Use service account file
+  else {
+    const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './serviceAccountKey.json';
+    
+    if (require('fs').existsSync(serviceAccountPath)) {
+      const serviceAccount = require(require('path').resolve(serviceAccountPath));
+      
+      // Check if it's the dummy file
+      if (serviceAccount.project_id === 'your-firebase-project-id') {
+        logger.warn('Firebase push notifications disabled (Using dummy serviceAccountKey.json)');
+        logger.warn('Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables to enable');
+      } else {
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
+        isInitialized = true;
+        logger.info('Firebase Admin initialized using service account file');
+      }
+    } else {
+      logger.warn('Firebase push notifications disabled (serviceAccountKey.json not found)');
+      logger.warn('Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables to enable');
+    }
+  }
+} catch (error) {
+  logger.error('Firebase initialization failed:', error.message);
+  logger.warn('Firebase push notifications disabled due to initialization error');
 }
 
 /**

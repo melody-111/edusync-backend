@@ -60,4 +60,30 @@ const validateQRPayload = (scannedPayload, storedToken, sessionId) => {
   );
 };
 
-module.exports = { generateSessionQR, validateQRPayload };
+const generateUserQR = async (user) => {
+  const userId = user._id.toString();
+  const timestamp = Date.now();
+  const token = crypto.randomBytes(16).toString('hex');
+  
+  const data = `${userId}:${timestamp}:${token}`;
+  const sig = crypto.createHmac('sha256', QR_SECRET).update(data).digest('hex').slice(0, 16);
+
+  const qrPayload = {
+    userId,
+    token,
+    ts: timestamp,
+    sig,
+    role: user.role,
+  };
+
+  const qrCodeDataUrl = await QRCode.toDataURL(JSON.stringify(qrPayload), {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 250,
+    color: { dark: '#000000', light: '#ffffff' },
+  });
+
+  return { qrCodeDataUrl, qrPayload };
+};
+
+module.exports = { generateSessionQR, validateQRPayload, generateUserQR };

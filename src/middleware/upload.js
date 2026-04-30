@@ -8,14 +8,23 @@ const { v4: uuidv4 } = require('uuid');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || 'uploads';
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE, 10) || 50 * 1024 * 1024; // 50MB
 
-// Ensure upload dirs exist
+// Ensure upload dirs exist (with error handling for read-only filesystems)
+let useFileUploads = true;
 ['uploads/files', 'uploads/temp', 'exports/pdfs'].forEach((dir) => {
   const p = path.join(process.cwd(), dir);
-  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+  try {
+    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+  } catch (err) {
+    // Fall back to memory-only uploads if directory creation fails
+    useFileUploads = false;
+  }
 });
 
 const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
+    if (!useFileUploads) {
+      return cb(new Error('File storage not available'));
+    }
     const dest = path.join(process.cwd(), UPLOAD_DIR, 'files');
     cb(null, dest);
   },

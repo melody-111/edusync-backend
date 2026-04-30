@@ -20,7 +20,14 @@ const { strokeBatchBuffer } = require('../socket/strokeBuffer');
 const logger = require('../utils/logger');
 
 const PDF_DIR = path.join(process.cwd(), 'exports', 'pdfs');
-if (!fs.existsSync(PDF_DIR)) fs.mkdirSync(PDF_DIR, { recursive: true });
+let usePdfStorage = true;
+try {
+  if (!fs.existsSync(PDF_DIR)) fs.mkdirSync(PDF_DIR, { recursive: true });
+} catch (err) {
+  // Fall back to no PDF storage if directory creation fails
+  usePdfStorage = false;
+  logger.warn('PDF storage directory not available, PDF generation disabled');
+}
 
 /**
  * Master save pipeline — runs after session ends
@@ -110,7 +117,16 @@ const generateUserPdf = async (session, participant) => {
     
     // Create hierarchical directory: userId/subject/date/
     const hierarchicalDir = path.join(PDF_DIR, user._id.toString(), subject, dateStr);
-    if (!fs.existsSync(hierarchicalDir)) fs.mkdirSync(hierarchicalDir, { recursive: true });
+    if (usePdfStorage) {
+      try {
+        if (!fs.existsSync(hierarchicalDir)) fs.mkdirSync(hierarchicalDir, { recursive: true });
+      } catch (err) {
+        logger.warn(`Could not create PDF directory for user ${user._id}: ${err.message}`);
+        return; // Skip PDF generation if directory creation fails
+      }
+    } else {
+      return; // Skip PDF generation if storage is disabled
+    }
 
     const filename = `${session.sessionId}.pdf`;
     const filePath = path.join(hierarchicalDir, filename);
@@ -206,9 +222,19 @@ const generateTeacherPdf = async (session) => {
 
     const pdfBuffer = await generatePdf(session, teacher, pages, [], 'teacher');
 
+    if (!usePdfStorage) {
+      logger.warn('PDF storage disabled, skipping teacher PDF generation');
+      return;
+    }
+
     const filename = `${session._id}_teacher_full_${Date.now()}.pdf`;
     const filePath = path.join(PDF_DIR, filename);
-    fs.writeFileSync(filePath, pdfBuffer);
+    try {
+      fs.writeFileSync(filePath, pdfBuffer);
+    } catch (err) {
+      logger.error(`Failed to write teacher PDF: ${err.message}`);
+      return;
+    }
     const fileUrl = `/exports/pdfs/${filename}`;
 
     await Session.findByIdAndUpdate(session._id, {

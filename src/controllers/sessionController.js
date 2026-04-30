@@ -878,26 +878,48 @@ const joinTeacherClass = asyncHandler(async (req, res) => {
   }, 'Successfully joined teacher class');
 });
 
+/**
+ * POST /session/:sessionId/refresh-qr
+ * Teacher manually refreshes the QR code for a session
+ */
+const refreshQR = asyncHandler(async (req, res) => {
+  const { sessionId } = req.params;
+  const user = req.user;
+
+  const session = await Session.findOne({ sessionId, teacherId: user._id });
+  if (!session) return sendError(res, 'Session not found or not authorized', 404);
+
+  const { qrToken, qrCodeDataUrl } = await generateSessionQR(sessionId);
+  
+  session.qrToken = qrToken;
+  await session.save();
+
+  // Broadcast the new QR if necessary, though usually frontend polls or teacher shows it
+  return sendSuccess(res, { qrCodeDataUrl, qrToken }, 'QR refreshed successfully');
+});
+
 module.exports = {
   startSession,
   startSelfSession,
   joinSession,
+  joinSessionDirect,
+  joinTeacherClass,
   endSession,
   getSession,
   getMySessions,
+  getActiveSessionsForClassroom,
+  getActiveSessionsByDeskId,
   updateControls,
   setSessionMedia,
   getSessionMedia,
+  saveSessionProgress,
+  refreshQR,
+  
+  // Validations
   startSessionValidation,
   joinSessionValidation,
-  setMediaValidation,
   updateControlsValidation,
+  setMediaValidation,
   sessionIdParamValidation,
-  sessionIdIdParamValidation,
-  saveSessionProgress,
-  getActiveSessionsForClassroom,
-  getActiveSessionsByDeskId,
-  joinSessionDirect,
-  joinTeacherClass,
+  sessionIdIdParamValidation
 };
-

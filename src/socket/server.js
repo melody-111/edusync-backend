@@ -26,13 +26,13 @@ const authenticateSocket = async (socket, next) => {
       socket.handshake.headers?.['x-terminal-id'];
 
     if (terminalId) {
-       // Allow terminal connection without a user token if terminalId is provided
-       // This is used by desktops waiting for a QR scan login
-       socket.isTerminal = true;
-       socket.terminalId = terminalId;
-       socket.userId = `terminal:${terminalId}`;
-       socket.userRole = 'terminal';
-       return next();
+      // Allow terminal connection without a user token if terminalId is provided
+      // This is used by desktops waiting for a QR scan login
+      socket.isTerminal = true;
+      socket.terminalId = terminalId;
+      socket.userId = `terminal:${terminalId}`;
+      socket.userRole = 'terminal';
+      return next();
     }
 
     const token =
@@ -43,19 +43,19 @@ const authenticateSocket = async (socket, next) => {
 
     // ─── Dev Mode Bypass ──────────────────────────────────────────────────────
     if (token === 'dev_token_secret' || token === 'dev_teacher_secret') {
-       socket.userId = token === 'dev_token_secret' ? '65c2a1e8f1d2e3b4c5d6e7f9' : '65c2a1e8f1d2e3b4c5d6e7f8';
-       socket.userRole = token === 'dev_token_secret' ? 'student' : 'teacher';
-       socket.user = { 
-          _id: socket.userId, 
-          name: 'Dev User', 
-          role: socket.userRole,
-          classroomId: 'Class 1',
-          branch: 'CS',
-          year: '3rd',
-          semester: '6'
-       };
-       socket.isTerminal = false;
-       return next();
+      socket.userId = token === 'dev_token_secret' ? '65c2a1e8f1d2e3b4c5d6e7f9' : '65c2a1e8f1d2e3b4c5d6e7f8';
+      socket.userRole = token === 'dev_token_secret' ? 'student' : 'teacher';
+      socket.user = {
+        _id: socket.userId,
+        name: 'Dev User',
+        role: socket.userRole,
+        classroomId: 'Class 1',
+        branch: 'CS',
+        year: '3rd',
+        semester: '6'
+      };
+      socket.isTerminal = false;
+      return next();
     }
 
     let decoded;
@@ -97,6 +97,15 @@ const authenticateSocket = async (socket, next) => {
 
 // ─── Room Validation Helper ────────────────────────────────────────────────────
 const validateRoomAccess = async (roomId, userId) => {
+  // Dev Mode Bypass for local testing without DB records
+  if (userId === '65c2a1e8f1d2e3b4c5d6e7f9' || userId === '65c2a1e8f1d2e3b4c5d6e7f8') {
+    return { 
+      valid: true, 
+      session: { _id: 'mock_session_123', sessionId: 'mock_session_123' }, 
+      participant: {} 
+    };
+  }
+
   // Look up session by roomId
   const session = await Session.findOne({ roomId, status: 'active' }).lean();
   if (!session) return { valid: false, reason: 'Room not found or session ended' };
@@ -122,8 +131,17 @@ const initSocketServer = async (httpServer) => {
           process.env.CLIENT_URL,
           'http://localhost:3000',
           'http://localhost:3001',
+          'http://localhost:3002',
+          'http://localhost:5173',
+          'http://localhost:5174',
           'http://localhost:8081',
           'http://127.0.0.1:8081',
+          'http://127.0.0.1:3001',
+          'http://127.0.0.1:3002',
+          'http://192.168.18.109:3001',
+          'http://192.168.18.109:3002',
+          'http://192.168.18.114:3001',
+          'http://192.168.18.114:3002',
         ].filter(Boolean);
         if (!origin || allowed.includes(origin)) return cb(null, true);
         return cb(new Error(`CORS blocked: ${origin}`));
@@ -131,22 +149,22 @@ const initSocketServer = async (httpServer) => {
       methods: ['GET', 'POST'],
       credentials: true,
     },
-    pingInterval: 10000,
-    pingTimeout: 5000,
+    pingInterval: 20000,
+    pingTimeout: 20000,
     maxHttpBufferSize: 5e6, // 5MB limit per message
     perMessageDeflate: {
       threshold: 1024, // only compress messages > 1kb
     },
     transports: ['websocket', 'polling'], // Essential for iOS/Android fallback
     allowEIO3: true,
-    connectTimeout: 20000,
+    connectTimeout: 30000,
   });
 
   // Setup Redis Adapter for multi-instance scaling
   try {
     const pubClient = createRedisClient();
     const subClient = pubClient.duplicate();
-    
+
     await Promise.all([pubClient.connect(), subClient.connect()]);
     _io.adapter(createAdapter(pubClient, subClient));
     logger.info('Socket.io Redis adapter enabled');
@@ -165,7 +183,7 @@ const initSocketServer = async (httpServer) => {
   _io.on('connection', (socket) => {
     const { user, userId, userRole } = socket;
     const queryRoomId = socket.handshake.query.roomId;
-    
+
     if (queryRoomId) {
       socket.join(queryRoomId);
       socket.currentRoomId = queryRoomId;
@@ -178,7 +196,7 @@ const initSocketServer = async (httpServer) => {
     if (!socket.isTerminal) {
       Device.findOneAndUpdate(
         { socketId: socket.id, status: 'online', lastConnectedAt: new Date() }
-      ).catch(() => {});
+      ).catch(() => { });
     }
 
     // ─── Classroom Room Joining (Isolation) ────────────────────────────────────
@@ -187,7 +205,7 @@ const initSocketServer = async (httpServer) => {
         const room = `classroom:${user.classroomId}`;
         socket.join(room);
         logger.debug(`${userRole} ${userId} joined classroom: ${room}`);
-        
+
         // If teacher, notify students in this room
         if (userRole === 'teacher') {
           socket.to(room).emit('teacher:online', {
@@ -197,7 +215,7 @@ const initSocketServer = async (httpServer) => {
           });
         }
       }
-      
+
       // University Style Targeting (Branch / Year / Sem)
       if (user.branch || user.year || user.semester) {
         const compositeGroup = `edu:${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
@@ -225,20 +243,20 @@ const initSocketServer = async (httpServer) => {
     // ─── callTeacher ──────────────────────────────────────────────────────────
     socket.on('callTeacher', async () => {
       if (socket.userRole !== 'student') return;
-      
+
       const Device = require('../models/Device');
       const Session = require('../models/Session');
-      
+
       // Find the active session for this student's room
       // In this system, one student usually belongs to one room at a time
       const session = await Session.findOne({ roomId: socket.currentRoomId, status: 'active' });
       if (!session) return;
 
       // Find teacher's online devices
-      const teacherDevices = await Device.find({ 
-        userId: session.teacherId, 
+      const teacherDevices = await Device.find({
+        userId: session.teacherId,
         status: 'online',
-        deviceType: 'mobile' 
+        deviceType: 'mobile'
       });
 
       const notificationData = {
@@ -262,7 +280,7 @@ const initSocketServer = async (httpServer) => {
       if (tokens.length > 0) {
         await sendPushNotification(tokens, notificationData.title, notificationData.body, notificationData.data);
       }
-      
+
       logger.info(`Student ${socket.userId} called teacher ${session.teacherId}`);
     });
 
@@ -270,10 +288,10 @@ const initSocketServer = async (httpServer) => {
     socket.on('joinClass', async ({ roomId }) => {
       try {
         if (!roomId) return;
-        
+
         socket.join(roomId);
         socket.currentRoomId = roomId;
-        
+
         const { valid, session, reason } = await validateRoomAccess(roomId, userId);
         if (!valid) return socket.emit('error', { message: reason });
 
@@ -313,11 +331,11 @@ const initSocketServer = async (httpServer) => {
           sessionId: session.sessionId,
           controls: controls
             ? {
-                keyboardEnabled: controls.keyboardEnabled,
-                copyPasteEnabled: controls.copyPasteEnabled,
-                aiEnabled: controls.aiEnabled,
-                youtubeEnabled: controls.youtubeEnabled,
-              }
+              keyboardEnabled: controls.keyboardEnabled,
+              copyPasteEnabled: controls.copyPasteEnabled,
+              aiEnabled: controls.aiEnabled,
+              youtubeEnabled: controls.youtubeEnabled,
+            }
             : {},
           media: media ? {
             mediaUrl: media.mediaUrl,
@@ -403,7 +421,7 @@ const initSocketServer = async (httpServer) => {
     socket.on('draw:student', async (payload) => {
       if (userRole !== 'student') return;
       strokeBatchBuffer.add(socket.currentSessionId, userId, 'student', payload);
-      
+
       // Broadcast to teacher for 20% preview (in the same room)
       socket.to(socket.currentRoomId).emit('student:draw', {
         ...payload,
@@ -478,13 +496,13 @@ const initSocketServer = async (httpServer) => {
       if (userRole !== 'teacher') return;
       const roomId = socket.currentRoomId;
       if (!roomId) return;
-      
+
       // Also persisting via helper for consistency
       await updateMediaSessionState(socket.currentSessionId, userId, 'idle', 0, {
         youtubeVideoId: payload.youtubeVideoId,
         mediaUrl: payload.mediaUrl
       });
-      
+
       socket.to(roomId).emit('mediaSet', { ...payload, from: userId, ts: Date.now() });
     });
 
@@ -492,7 +510,7 @@ const initSocketServer = async (httpServer) => {
       if (userRole !== 'teacher') return;
       const roomId = socket.currentRoomId;
       if (!roomId) return;
-      
+
       await updateMediaSessionState(socket.currentSessionId, userId, payload.state, payload.seekTo || payload.position);
       socket.to(roomId).emit('mediaState', { ...payload, from: userId, ts: Date.now() });
     });
@@ -502,7 +520,7 @@ const initSocketServer = async (httpServer) => {
       if (userRole !== 'student') return;
       const allowed = await isControlAllowed(socket.currentSessionId, userId, 'keyboardEnabled');
       if (!allowed) return socket.emit('error', { message: 'Keyboard disabled' });
-      
+
       logActivity({
         sessionId: socket.currentSessionId,
         userId,
@@ -524,11 +542,16 @@ const initSocketServer = async (httpServer) => {
 
     // ─── Teacher → All Students: class:started (Notify when class starts) ──────
     socket.on('class:started', async (payload) => {
-      if (userRole !== 'teacher') return;
+      console.log(`[SOCKET] Received class:started from ${userId} (${userRole})`, payload);
       
+      if (userRole !== 'teacher') {
+        console.warn(`[SOCKET] Rejecting class:started from non-teacher: ${userRole}`);
+        return;
+      }
+
       const teacherName = user.name || 'Your Teacher';
       const subject = payload.subject || 'Live Class';
-      
+
       const notificationPayload = {
         ...payload,
         from: userId,
@@ -547,52 +570,54 @@ const initSocketServer = async (httpServer) => {
       }
 
       targetRooms.forEach(room => {
+        console.log(`[SOCKET] Emitting class:started to target room: ${room}`);
         _io.to(room).emit('class:started', notificationPayload);
       });
 
       // 2. Global fallback (for students not in specific rooms)
+      console.log(`[SOCKET] Emitting class:started globally as fallback`);
       _io.emit('class:started', notificationPayload);
 
       // 3. 🆕 Mobile Push Notifications
       try {
         const { sendPushNotification } = require('../utils/push');
         const Device = require('../models/Device');
-        
+
         // Find students in this cohort/classroom
         const query = { role: 'student' };
         if (user.classroomId) query.classroomId = user.classroomId;
         else if (user.branch) {
-           query.branch = user.branch;
-           query.year = user.year;
-           query.semester = user.semester;
+          query.branch = user.branch;
+          query.year = user.year;
+          query.semester = user.semester;
         }
 
         const User = require('../models/User');
         const studentIds = (await User.find(query).select('_id')).map(s => s._id);
-        
-        if (studentIds.length > 0 || token === 'dev_teacher_secret') {
-           // For dev mode, we might not have real DB users, so we can't find tokens easily
-           // but we'll try for any online student devices
-           const studentDevices = await Device.find({ 
-             userId: { $in: studentIds },
-             status: 'online',
-             fcmToken: { $exists: true }
-           });
 
-           const tokens = studentDevices.map(d => d.fcmToken);
-           if (tokens.length > 0) {
-             await sendPushNotification(
-               tokens,
-               'Class is Live!',
-               `${teacherName} started ${subject}. Join now!`,
-               { type: 'CLASS_STARTED', roomId: payload.roomId || user.classroomId }
-             );
-           }
+        if (studentIds.length > 0 || socket.userId === '65c2a1e8f1d2e3b4c5d6e7f8') {
+          // For dev mode, we might not have real DB users, so we can't find tokens easily
+          // but we'll try for any online student devices
+          const studentDevices = await Device.find({
+            userId: { $in: studentIds },
+            status: 'online',
+            fcmToken: { $exists: true }
+          });
+
+          const tokens = studentDevices.map(d => d.fcmToken);
+          if (tokens.length > 0) {
+            await sendPushNotification(
+              tokens,
+              'Class is Live!',
+              `${teacherName} started ${subject}. Join now!`,
+              { type: 'CLASS_STARTED', roomId: payload.roomId || user.classroomId }
+            );
+          }
         }
       } catch (err) {
         logger.error('Failed to send class started push notifications:', err.message);
       }
-      
+
       logger.info(`Class started by teacher ${userId} [${teacherName}] in ${targetRooms.size} targeted rooms`);
     });
 
@@ -601,7 +626,7 @@ const initSocketServer = async (httpServer) => {
       if (userRole !== 'teacher') return;
       const roomId = socket.currentRoomId;
       if (!roomId) return;
-      
+
       const normalizedPayload = { ...payload };
       if (payload.aiAccess !== undefined) normalizedPayload.aiEnabled = payload.aiAccess;
       if (payload.youtubeAccess !== undefined) normalizedPayload.youtubeEnabled = payload.youtubeAccess;
@@ -614,9 +639,9 @@ const initSocketServer = async (httpServer) => {
       if (userRole !== 'teacher') return;
       const roomId = socket.currentRoomId;
       if (!roomId) return;
-      
+
       try {
-        await Session.findByIdAndUpdate(socket.currentSessionId, { 
+        await Session.findByIdAndUpdate(socket.currentSessionId, {
           activeView: payload.view,
           activeYouTubeVideoId: payload.videoId || null
         });
@@ -624,11 +649,11 @@ const initSocketServer = async (httpServer) => {
         logger.error(`Failed to persist view-change: ${err.message}`);
       }
 
-      socket.to(roomId).emit('view-change', { 
-        view: payload.view, 
+      socket.to(roomId).emit('view-change', {
+        view: payload.view,
         videoId: payload.videoId,
-        from: userId, 
-        ts: Date.now() 
+        from: userId,
+        ts: Date.now()
       });
     });
 
@@ -668,7 +693,7 @@ const initSocketServer = async (httpServer) => {
         SessionParticipant.findOneAndUpdate(
           { sessionId: socket.currentSessionId, userId },
           { lastHeartbeatAt: new Date() }
-        ).catch(() => {});
+        ).catch(() => { });
       }, 30_000); // Write to DB at most once per 30 seconds per socket
 
       _heartbeatTimers.set(socket.id, timer);
@@ -689,7 +714,7 @@ const initSocketServer = async (httpServer) => {
         await SessionParticipant.findOneAndUpdate(
           { sessionId: socket.currentSessionId, userId },
           { isConnected: false, leftAt: new Date(), socketId: null }
-        ).catch(() => {});
+        ).catch(() => { });
 
         // Notify room of disconnect
         if (socket.currentRoomId) {
@@ -702,13 +727,13 @@ const initSocketServer = async (httpServer) => {
         }
 
         // Flush any buffered strokes for this user
-        strokeBatchBuffer.flush(socket.currentSessionId, userId).catch(() => {});
+        strokeBatchBuffer.flush(socket.currentSessionId, userId).catch(() => { });
       }
 
       await Device.findOneAndUpdate(
         { socketId: socket.id },
         { status: 'offline', socketId: null, lastSeenAt: new Date() }
-      ).catch(() => {});
+      ).catch(() => { });
 
       logActivity({
         sessionId: socket.currentSessionId || null,
@@ -726,7 +751,7 @@ const initSocketServer = async (httpServer) => {
         SessionParticipant.findOneAndUpdate(
           { sessionId: socket.currentSessionId, userId },
           { $inc: { reconnectCount: 1 }, isConnected: true, socketId: socket.id }
-        ).catch(() => {});
+        ).catch(() => { });
       }
     });
   });

@@ -29,6 +29,15 @@ router.post('/login', authLimiter, loginValidation, validate, login);
 // POST /auth/login-password — login with email and password
 router.post('/login-password', authLimiter, validate, loginWithPassword);
 
+// POST /auth/signup — register new user
+router.post('/signup', authLimiter, validate, require('../controllers/authController').signup);
+
+// POST /auth/forgot-password — send password reset email
+router.post('/forgot-password', authLimiter, validate, require('../controllers/authController').forgotPassword);
+
+// POST /auth/reset-password — reset password with token
+router.post('/reset-password', authLimiter, validate, require('../controllers/authController').resetPassword);
+
 // POST /auth/verify-otp — verify OTP, get JWT tokens
 router.post('/verify-otp', otpLimiter, verifyOtpValidation, validate, verifyOtp);
 

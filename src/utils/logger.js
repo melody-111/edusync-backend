@@ -4,9 +4,15 @@ const { createLogger, format, transports } = require('winston');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure logs directory exists
+// Ensure logs directory exists (with error handling for read-only filesystems)
 const logsDir = path.join(process.cwd(), 'logs');
-if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+let useFileLogging = true;
+try {
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+} catch (err) {
+  // Fall back to console-only logging if directory creation fails
+  useFileLogging = false;
+}
 
 const { combine, timestamp, printf, colorize, errors, json } = format;
 
@@ -25,11 +31,13 @@ const prodFormat = combine(
   json()
 );
 
-const logger = createLogger({
-  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'warn' : 'debug'),
-  format: process.env.NODE_ENV === 'production' ? prodFormat : devFormat,
-  transports: [
-    new transports.Console(),
+const loggerTransports = [
+  new transports.Console(),
+];
+
+// Only add file transports if directory creation succeeded
+if (useFileLogging) {
+  loggerTransports.push(
     new transports.File({
       filename: path.join(logsDir, 'error.log'),
       level: 'error',
@@ -40,8 +48,14 @@ const logger = createLogger({
       filename: path.join(logsDir, 'combined.log'),
       maxsize: 20 * 1024 * 1024,
       maxFiles: 10,
-    }),
-  ],
+    })
+  );
+}
+
+const logger = createLogger({
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'warn' : 'debug'),
+  format: process.env.NODE_ENV === 'production' ? prodFormat : devFormat,
+  transports: loggerTransports,
   exitOnError: false,
 });
 

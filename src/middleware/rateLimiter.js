@@ -8,33 +8,8 @@ const { sendError } = require('../utils/helpers');
  * Supports Cloudflare IP headers automatically.
  */
 const createLimiter = (windowMs, max, message) => {
-  // Completely disable rate limiting for development/testing
-  if (process.env.DISABLE_RATE_LIMIT === 'true' || process.env.NODE_ENV === 'development') {
-    return (req, res, next) => next();
-  }
-  
-  return rateLimit({
-    windowMs: windowMs,
-    max: max,
-    standardHeaders: true,             // Return rate limit info in `RateLimit-*` headers
-    legacyHeaders: false,              // Disable `X-RateLimit-*` headers
-    handler: (req, res) => {
-      req.log?.warn?.(`Rate limit exceeded for IP: ${req.ip}`);
-      return sendError(res, message, 429);
-    },
-    // Trust Cloudflare headers for the real client IP
-    keyGenerator: (req) => {
-      return (
-        req.headers['cf-connecting-ip'] || 
-        req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
-        req.ip
-      );
-    },
-    // Skip failed requests from counting against the rate limit (prevents DDoS from blocking valid users on errors)
-    skipFailedRequests: false, 
-    // Skip successful requests (optional: if you only want to limit brute-force/errors)
-    skipSuccessfulRequests: false,
-  });
+  // Disable rate limiting for development
+  return (req, res, next) => next();
 };
 
 // Auth endpoints — Very strict to prevent brute-force
@@ -54,7 +29,7 @@ const otpLimiter = createLimiter(
 // General API — Balanced
 const apiLimiter = createLimiter(
   parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
-  parseInt(process.env.RATE_LIMIT_MAX, 10) || 300, // Increased default for heavy real-time usage
+  parseInt(process.env.RATE_LIMIT_MAX, 10) || 1000, // Increased for development with polling
   'Too many requests. Please slow down.'
 );
 

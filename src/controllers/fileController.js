@@ -74,7 +74,8 @@ const getUserNotes = asyncHandler(async (req, res) => {
   const user = req.user;
 
   const query = { ownerId: user._id, isDeleted: false };
-  if (sessionId) query.sessionId = sessionId;
+  const sid = sessionId || req.params.sessionId;
+  if (sid) query.sessionId = sid;
   if (fileType) query.fileType = fileType;
 
   const { docs: files, pagination } = await paginate(File, query, {
@@ -209,6 +210,8 @@ const saveNote = asyncHandler(async (req, res) => {
   const { subjectId, noteId, title, canvasData, thumbnail } = req.body;
   const user = req.user;
 
+  console.log(`[NotesSync] Attempting to save note for user: ${user?._id}, noteId: ${noteId}, subjectId: ${subjectId}`);
+
   if (!user) return sendError(res, 'Unauthorized', 401);
 
   // Serialize canvasData (could be Array or Object from Fabric.js)
@@ -220,35 +223,43 @@ const saveNote = asyncHandler(async (req, res) => {
   const mongoose = require('mongoose');
   let note;
 
-  // Prevent CastError if frontend sends non-ObjectId string (like "note-12345")
-  if (mongoose.Types.ObjectId.isValid(noteId)) {
-    note = await File.findOne({ _id: noteId, ownerId: user._id });
-  } else {
-    note = await File.findOne({ storageKey: noteId, ownerId: user._id });
-  }
+  try {
+    // Prevent CastError if frontend sends non-ObjectId string (like "note-12345")
+    if (mongoose.Types.ObjectId.isValid(noteId)) {
+      note = await File.findOne({ _id: noteId, ownerId: user._id });
+    } else {
+      note = await File.findOne({ storageKey: noteId, ownerId: user._id });
+    }
 
-  if (note) {
-    note.title = title || note.title;
-    note.canvasData = serializedCanvas;
-    note.url = thumbnail || note.url;
-    note.lastAutoSavedAt = new Date();
-  } else {
-    note = new File({
-      ownerId: user._id,
-      ownerRole: user.role || 'student',
-      fileType: 'note',
-      title: title || 'Untitled Note',
-      sessionId: subjectId || null,
-      url: thumbnail || '',
-      size: 0,
-      storageKey: noteId || `note-${Date.now()}`,
-      canvasData: serializedCanvas,
-      lastAutoSavedAt: new Date(),
-    });
-  }
+    if (note) {
+      console.log(`[NotesSync] Updating existing note: ${note._id}`);
+      note.title = title || note.title;
+      note.canvasData = serializedCanvas;
+      note.url = thumbnail || note.url;
+      note.lastAutoSavedAt = new Date();
+    } else {
+      console.log(`[NotesSync] Creating new note with storageKey: ${noteId}`);
+      note = new File({
+        ownerId: user._id,
+        ownerRole: user.role || 'student',
+        fileType: 'note',
+        title: title || 'Untitled Note',
+        sessionId: subjectId || null,
+        url: thumbnail || '',
+        size: serializedCanvas ? Buffer.byteLength(serializedCanvas, 'utf8') : 0,
+        storageKey: noteId || `note-${Date.now()}`,
+        canvasData: serializedCanvas,
+        lastAutoSavedAt: new Date(),
+      });
+    }
 
-  await note.save();
-  return sendSuccess(res, { note }, 'Note saved successfully');
+    await note.save();
+    console.log(`[NotesSync] Note saved successfully: ${note._id}`);
+    return sendSuccess(res, { note }, 'Note saved successfully');
+  } catch (err) {
+    console.error(`[NotesSync] Failed to save note: ${err.message}`, err);
+    return sendError(res, `Failed to save note: ${err.message}`, 500);
+  }
 });
 
 
@@ -268,9 +279,19 @@ const syncNotesByGmail = asyncHandler(async (req, res) => {
 
   if (!gmail) return sendError(res, 'Gmail address required', 400);
 
+  // SECURITY FIX: Ensure the requested Gmail belongs to the authenticated user
+  if (req.user.email?.toLowerCase() !== gmail.toLowerCase() && req.user.gmail?.toLowerCase() !== gmail.toLowerCase()) {
+    return sendError(res, 'Access denied: You can only sync your own notes', 403);
+  }
+
   // Find user by Gmail
   const User = require('../models/User');
-  const user = await User.findOne({ gmail: gmail.toLowerCase() });
+  const user = await User.findOne({ 
+    $or: [
+      { gmail: gmail.toLowerCase() },
+      { email: gmail.toLowerCase() }
+    ]
+  });
 
   if (!user) return sendError(res, 'User not found with this Gmail', 404);
 

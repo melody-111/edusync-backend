@@ -12,10 +12,10 @@ const path = require('path');
 
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { apiLimiter } = require('./middleware/rateLimiter');
-const { 
-  requestId, 
-  generalLimiter, 
-  authLimiter, 
+const {
+  requestId,
+  generalLimiter,
+  authLimiter,
   ipWhitelist
 } = require('./middleware/security');
 const xss = require('xss-clean');
@@ -39,6 +39,7 @@ const notesRoutes = require('./routes/notes');
 const adminRoutes = require('./routes/admin');
 const folderRoutes = require('./routes/folders');
 const freeStudyRoutes = require('./routes/freeStudy'); // 🆕 Free Study Mode
+const youtubeRoutes = require('./routes/youtube'); // 🆕 YouTube Search
 
 const createApp = () => {
   const app = express();
@@ -90,6 +91,9 @@ const createApp = () => {
       'http://192.168.18.109:8081',
       'http://192.168.18.109:5001',
       process.env.MOBILE_APP_URL || 'capacitor://localhost',
+      // Vercel frontend URLs
+      'https://*.vercel.app',
+      'https://*.vercel.app:443',
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -113,7 +117,7 @@ const createApp = () => {
   // ─── Data Sanitization & Input Validation ────────────────────────────────────
   // Protect against NoSQL Injection
   app.use(mongoSanitize());
-  
+
   // Protect against XSS
   app.use(xss());
 
@@ -141,10 +145,10 @@ const createApp = () => {
   app.get('/health', async (req, res) => {
     const mongoose = require('mongoose');
     const { cache } = require('./config/redis');
-    
+
     const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
     const redisStatus = cache.isAvailable() ? 'connected' : 'disconnected';
-    
+
     // PostgreSQL is optional for health check
     let postgresStatus = 'not_configured';
     if (process.env.POSTGRES_URI) {
@@ -156,10 +160,10 @@ const createApp = () => {
         postgresStatus = 'disconnected';
       }
     }
-    
+
     // Consider healthy if MongoDB and Redis are connected (PostgreSQL is optional)
     const status = (dbStatus === 'connected' && redisStatus === 'connected') ? 'healthy' : 'degraded';
-    
+
     res.status(status === 'healthy' ? 200 : 503).json({
       status,
       timestamp: new Date().toISOString(),
@@ -174,33 +178,33 @@ const createApp = () => {
 
 
   // ─── API Routes ───────────────────────────────────────────────────────────────
-  // Auth routes with strict rate limiting
-  app.use('/auth', authLimiter, authRoutes);
-  
+  // Auth routes (individual routes have specific limiters)
+  app.use('/auth', authRoutes);
+
   // Session routes with API limiter
   app.use('/session', apiLimiter, sessionRoutes);
-  
+
   // Device routes with API limiter
   app.use('/devices', apiLimiter, deviceRoutes);
-  
+
   // File routes with API limiter
   app.use('/files', apiLimiter, fileRoutes);
-  
+
   // Mobile notes API with API limiter
   app.use('/user/notes', apiLimiter, notesRoutes);
-  
+
   // AI routes with API limiter
   app.use('/ai', apiLimiter, aiRoutes);
-  
+
   // Notification routes with API limiter
   app.use('/notifications', apiLimiter, notificationRoutes);
-  
+
   // Sync routes with API limiter
   app.use('/sync', apiLimiter, syncRoutes);
-  
+
   // Classroom routes with API limiter
   app.use('/classrooms', apiLimiter, classroomRoutes);
-  
+
   // Admin routes with IP whitelisting (configure allowed IPs in .env)
   const adminAllowedIPs = process.env.ADMIN_ALLOWED_IPS ? process.env.ADMIN_ALLOWED_IPS.split(',') : [];
   if (adminAllowedIPs.length > 0) {
@@ -208,12 +212,15 @@ const createApp = () => {
   } else {
     app.use('/admin', adminRoutes);
   }
-  
+
   // Folder routes with API limiter
   app.use('/folders', apiLimiter, folderRoutes);
-  
+
   // 🆕 Free Study Mode
   app.use('/', freeStudyRoutes);
+
+  // 🆕 YouTube Search
+  app.use('/youtube', apiLimiter, youtubeRoutes);
 
   // ─── 404 + Error Handlers ─────────────────────────────────────────────────────
   app.use(notFoundHandler);

@@ -98,6 +98,12 @@ class StrokeBatchBuffer {
    * @param {object} strokeData
    */
   async add(sessionId, userId, role, strokeData) {
+    // Validate sessionId - prevent undefined from causing DB errors
+    if (!sessionId || sessionId === 'undefined' || sessionId === undefined) {
+      logger.warn(`[StrokeBuffer] Invalid sessionId provided, skipping stroke`);
+      return;
+    }
+
     const stroke = {
       x: strokeData.x,
       y: strokeData.y,
@@ -191,6 +197,17 @@ class StrokeBatchBuffer {
     }
 
     if (!strokes.length) return;
+
+    // Validate sessionId before DB write
+    if (!sessionId || sessionId === 'undefined' || sessionId === undefined || sessionId.length < 10) {
+      logger.warn(`[StrokeBuffer] Invalid sessionId in flush, skipping ${strokes.length} strokes`);
+      return;
+    }
+
+    if (!meta?.pageId || meta.pageId === 'undefined' || meta.pageId.length < 10) {
+      logger.warn(`[StrokeBuffer] Invalid pageId in flush, skipping ${strokes.length} strokes`);
+      return;
+    }
 
     const counterKey = `${sessionId}:${meta?.pageId}`;
     const batchIndex = (this._batchCounters.get(counterKey) || 0) + 1;

@@ -8,6 +8,7 @@ const {
   getMySessions, updateControls,
   setSessionMedia, getSessionMedia,
   saveSessionProgress,
+  refreshQR,
   startSessionValidation, joinSessionValidation, setMediaValidation,
 
   updateControlsValidation, sessionIdParamValidation, sessionIdIdParamValidation,
@@ -101,6 +102,12 @@ router.post(
 
 // GET  /session/:sessionId/media — get current media state (any authenticated user)
 router.get('/:sessionId/media', sessionIdParamValidation, validate, getSessionMedia);
+
+// POST /session/:sessionId/refresh-qr — teacher refreshes QR
+router.post('/:sessionId/refresh-qr', requireRole('teacher'), sessionIdParamValidation, validate, refreshQR);
+
+// GET  /session/:sessionId/notes — get notes for a specific session
+router.get('/:sessionId/notes', sessionIdParamValidation, validate, require('../controllers/fileController').getUserNotes);
 
 // GET  /session/mine — user's own session history
 router.get('/mine', getMySessions);

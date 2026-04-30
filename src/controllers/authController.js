@@ -445,7 +445,18 @@ const logout = asyncHandler(async (req, res) => {
   const ttl = Math.max(0, req.tokenPayload.exp - Math.floor(Date.now() / 1000));
   if (ttl > 0) await cache.set(`blacklist:${jti}`, '1', ttl);
 
-  // Clear refresh token and regenerate QR token for fresh login
+  // Clear refresh token and invalidate active sessions
+  const Session = require('../models/Session');
+  const activeSessions = await Session.find({ ownerId: req.user._id, status: 'active' });
+  
+  for (const session of activeSessions) {
+    session.status = 'ended';
+    session.endedAt = new Date();
+    session.qrToken = crypto.randomBytes(16).toString('hex'); // Invalidate QR
+    await session.save();
+    await cache.del(`session:${session.sessionId}`);
+  }
+
   const newQrToken = crypto.randomBytes(32).toString('hex');
   await User.findByIdAndUpdate(req.user._id, { 
     refreshToken: null,
@@ -454,7 +465,88 @@ const logout = asyncHandler(async (req, res) => {
 
   logActivity({ userId: req.user._id, actorRole: req.user.role, action: 'auth.logout', category: 'auth', ip: getClientIp(req) });
 
-  return sendSuccess(res, null, 'Logged out successfully');
+  return sendSuccess(res, null, 'Logged out successfully and active sessions ended');
+});
+
+/**
+ * POST /auth/signup
+ */
+const signup = asyncHandler(async (req, res) => {
+  const { email, password, name, role } = req.body;
+
+  let user = await User.findOne({ email: email.toLowerCase() });
+  if (user) {
+    return sendError(res, 'User already exists', 400);
+  }
+
+  user = await User.create({
+    email: email.toLowerCase(),
+    name: name || email.split('@')[0],
+    role: role || 'student',
+    isVerified: false,
+  });
+
+  if (password) {
+    await user.setPassword(password);
+    await user.save({ validateBeforeSave: false });
+  }
+
+  const otp = generateOtp();
+  const otpKey = `otp:${email.toLowerCase()}`;
+  await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 300);
+
+  await sendOtpEmail(user.email, otp, user.name);
+
+  return sendSuccess(res, { email: user.email }, 'Signup successful, please verify OTP');
+});
+
+/**
+ * POST /auth/forgot-password
+ */
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email: email.toLowerCase() });
+  
+  if (!user) {
+    // Return success anyway to prevent email enumeration
+    return sendSuccess(res, null, 'If an account exists, a reset link has been sent');
+  }
+
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  
+  user.resetPasswordToken = hashedToken;
+  user.resetPasswordExpire = Date.now() + 3600000; // 1 hour
+  await user.save({ validateBeforeSave: false });
+
+  // TODO: Send email with resetToken
+  logger.info(`Password reset token for ${email}: ${resetToken}`);
+
+  return sendSuccess(res, null, 'Password reset instructions sent');
+});
+
+/**
+ * POST /auth/reset-password
+ */
+const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = req.body;
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+  const user = await User.findOne({
+    resetPasswordToken: hashedToken,
+    resetPasswordExpire: { $gt: Date.now() }
+  });
+
+  if (!user) {
+    return sendError(res, 'Invalid or expired reset token', 400);
+  }
+
+  await user.setPassword(password);
+  user.resetPasswordToken = undefined;
+  user.resetPasswordExpire = undefined;
+  await user.save();
+
+  return sendSuccess(res, null, 'Password reset successful');
 });
 
 // ─── Google OAuth Routes ───────────────────────────────────────────────────────
@@ -909,6 +1001,9 @@ module.exports = {
   verify2FA,
   disable2FA: disable2FAEndpoint,
   check2FAStatus,
+  signup,
+  forgotPassword,
+  resetPassword,
   googleAuth,
   googleCallback,
   getMyQrToken,
