@@ -132,6 +132,7 @@ const initSocketServer = async (httpServer) => {
           'http://localhost:3000',
           'http://localhost:3001',
           'http://localhost:3002',
+          'http://localhost:3003',
           'http://localhost:5173',
           'http://localhost:5174',
           'http://localhost:8081',
@@ -143,7 +144,11 @@ const initSocketServer = async (httpServer) => {
           'http://192.168.18.114:3001',
           'http://192.168.18.114:3002',
         ].filter(Boolean);
-        if (!origin || allowed.includes(origin)) return cb(null, true);
+
+        // Allow if origin is in allowed list, or matches Vercel subdomain, or is null (for mobile apps)
+        if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
+          return cb(null, true);
+        }
         return cb(new Error(`CORS blocked: ${origin}`));
       },
       methods: ['GET', 'POST'],

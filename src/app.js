@@ -94,7 +94,7 @@ const createApp = () => {
       // Vercel frontend URLs
       'https://edu-sync-teacher-app.vercel.app',
       'https://edu-sync-student-app.vercel.app',
-      'https://*.vercel.app',
+      /\.vercel\.app$/, // Correctly allow all Vercel subdomains using Regex
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
