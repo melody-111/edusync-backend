@@ -92,8 +92,9 @@ const createApp = () => {
       'http://192.168.18.109:5001',
       process.env.MOBILE_APP_URL || 'capacitor://localhost',
       // Vercel frontend URLs
+      'https://edu-sync-teacher-app.vercel.app',
+      'https://edu-sync-student-app.vercel.app',
       'https://*.vercel.app',
-      'https://*.vercel.app:443',
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
