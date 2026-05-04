@@ -43,7 +43,7 @@
 2. Create free account
 3. Create new Web Service:
    - Connect GitHub repository
-   - Root Directory: `web-app backend`
+   - Root Directory: (Leave blank)
    - Build Command: `npm install`
    - Start Command: `npm start`
    - Instance Type: Free
