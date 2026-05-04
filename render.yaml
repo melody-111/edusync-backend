@@ -3,24 +3,23 @@ services:
     name: digital-classroom-backend
     env: docker
     plan: free
-
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 10000
+        value: "10000"
       - key: CLIENT_URL
         value: https://your-frontend-domain.com
       # Database (Update with production MongoDB URI)
       - key: MONGODB_URI
-        value: mongodb://mongo:27017/digital_classroom
+        value: mongodb+srv://Divyansh:Divyansh@trial.qjmankx.mongodb.net/digital_classroom?retryWrites=true&w=majority
       # Redis (Use Render Redis addon for production)
       - key: REDIS_HOST
-        value: redis
+        value: redis-10774.c263.us-east-1-2.ec2.cloud.redislabs.com
       - key: REDIS_PORT
-        value: 6379
+        value: "10774"
       - key: REDIS_PASSWORD
-        value: ""
+        value: tNwhDw2V0k2CB7XCEADBGZELfe9DUkVH
       # JWT Secrets
       - key: JWT_SECRET
         generateValue: true
@@ -41,18 +40,18 @@ services:
       - key: GOOGLE_CLIENT_SECRET
         value: your_google_client_secret
       - key: GOOGLE_CALLBACK_URL
-        value: https://your-backend-domain.com/auth/google/callback
+        value: https://edusync-backend-4.onrender.com/auth/google/callback
       # Email SMTP
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
-        value: 587
+        value: "587"
       - key: SMTP_SECURE
-        value: false
+        value: "false"
       - key: SMTP_USER
-        value: your_email@gmail.com
+        value: sudhanshusonkar210@gmail.com
       - key: SMTP_PASS
-        value: your_app_password
+        value: "lscs qhdo xrxd ngdp"
       - key: EMAIL_FROM
         value: "Digital Classroom <noreply@classroom.app>"
       # AI API
@@ -72,14 +71,14 @@ services:
       - key: UPLOAD_DIR
         value: uploads
       - key: MAX_FILE_SIZE
-        value: 52428800
+        value: "52428800"
       - key: PDF_STORAGE_DIR
         value: exports/pdfs
       # Rate Limiting
       - key: RATE_LIMIT_WINDOW_MS
-        value: 900000
+        value: "900000"
       - key: RATE_LIMIT_MAX
-        value: 100
+        value: "100"
       # Socket.io
       - key: SOCKET_CORS_ORIGIN
         value: https://your-frontend-domain.com
