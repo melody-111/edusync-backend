@@ -1,7 +1,7 @@
 services:
   - type: web
     name: digital-classroom-backend
-    env: docker
+    runtime: docker
     plan: free
     envVars:
       - key: NODE_ENV
