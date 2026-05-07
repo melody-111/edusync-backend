@@ -15,7 +15,7 @@ const folderSchema = new mongoose.Schema(
       default: null 
     },
     ownerId: { 
-      type: mongoose.Schema.Types.ObjectId, 
+      type: mongoose.Schema.Types.Mixed, 
       ref: 'User', 
       required: true,
       index: true
@@ -47,5 +47,9 @@ const folderSchema = new mongoose.Schema(
 
 // Prevent same name in same parent
 folderSchema.index({ name: 1, parentFolder: 1, ownerId: 1 }, { unique: true });
+
+// Force re-registration to bust Mongoose model cache
+delete mongoose.models['Folder'];
+delete mongoose.modelSchemas?.['Folder'];
 
 module.exports = mongoose.model('Folder', folderSchema);

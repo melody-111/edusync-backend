@@ -11,7 +11,7 @@ const fileSchema = new mongoose.Schema(
       index: true,
     },
     ownerId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
       ref: 'User',
       required: true,
       index: true,
@@ -55,5 +55,9 @@ const fileSchema = new mongoose.Schema(
 
 fileSchema.index({ sessionId: 1, ownerRole: 1 });
 fileSchema.index({ ownerId: 1, fileType: 1, isDeleted: 1 });
+
+// Force re-registration to bust Mongoose model cache
+delete mongoose.models['File'];
+delete mongoose.modelSchemas?.['File'];
 
 module.exports = mongoose.model('File', fileSchema);

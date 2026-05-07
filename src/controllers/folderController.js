@@ -43,7 +43,7 @@ const getFolders = asyncHandler(async (req, res) => {
   const user = req.user;
 
   const query = {
-    ownerId: mongoose.Types.ObjectId.isValid(user._id) ? user._id : new mongoose.Types.ObjectId(),
+    ownerId: user._id,
     isDeleted: false,
     parentFolder: parentFolder || null,
   };
