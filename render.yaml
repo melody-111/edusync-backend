@@ -20,6 +20,8 @@ services:
         value: "10774"
       - key: REDIS_PASSWORD
         value: tNwhDw2V0k2CB7XCEADBGZELfe9DUkVH
+      - key: REDIS_TLS
+        value: "true"
       # JWT Secrets
       - key: JWT_SECRET
         generateValue: true
@@ -51,7 +53,7 @@ services:
       - key: SMTP_USER
         value: sudhanshusonkar210@gmail.com
       - key: SMTP_PASS
-        value: "lscs qhdo xrxd ngdp"
+        value: "lscsqhdoxrxdngdp"
       - key: EMAIL_FROM
         value: "Digital Classroom <noreply@classroom.app>"
       # AI API
