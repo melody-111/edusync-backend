@@ -42,7 +42,9 @@ services:
       - key: GOOGLE_CLIENT_SECRET
         value: your_google_client_secret
       - key: GOOGLE_CALLBACK_URL
-        value: https://edusync-backend-4.onrender.com/auth/google/callback
+        value: https://edusync-backend-application.onrender.com/auth/google/callback
+      - key: TEACHER_APP_URL
+        value: https://edu-sync-teacher-app.vercel.app
       # Email SMTP
       - key: SMTP_HOST
         value: smtp.gmail.com
