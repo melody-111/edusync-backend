@@ -2,6 +2,7 @@
 
 const Folder = require('../models/Folder');
 const File = require('../models/File');
+const mongoose = require('mongoose');
 const { body, param } = require('express-validator');
 const { asyncHandler, sendSuccess, sendError } = require('../utils/helpers');
 
@@ -42,7 +43,7 @@ const getFolders = asyncHandler(async (req, res) => {
   const user = req.user;
 
   const query = {
-    ownerId: user._id,
+    ownerId: mongoose.Types.ObjectId.isValid(user._id) ? user._id : new mongoose.Types.ObjectId(),
     isDeleted: false,
     parentFolder: parentFolder || null,
   };

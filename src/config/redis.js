@@ -61,12 +61,12 @@ const connectRedis = async () => {
     redisClient = new Redis(config);
 
     redisClient.on('error', (err) => {
+      _isAvailable = false;
+      // Only log unique errors to avoid spam
       if (err.message.includes('NOAUTH')) {
-        logger.error('[Redis] Auth failed. Falling back to in-memory cache.');
-        _isAvailable = false;
+        // Fallback is already handled, no need to spam
       } else {
-        logger.error(`[Redis] Error: ${err.message}`);
-        _isAvailable = false;
+        logger.debug(`[Redis] Silent fallback active: ${err.message}`);
       }
     });
 
