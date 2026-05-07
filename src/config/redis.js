@@ -30,6 +30,11 @@ const connectRedis = async () => {
         port: parseInt(process.env.REDIS_PORT, 10) || 6379,
         password: process.env.REDIS_PASSWORD || undefined,
       };
+      
+      // Some cloud providers (like Redis Labs) require TLS
+      if (config.host.includes('redislabs.com') || process.env.REDIS_TLS === 'true') {
+        config.tls = {}; 
+      }
     }
 
     // Common options
