@@ -25,15 +25,22 @@ const connectRedis = async () => {
         };
       }
     } else {
-      config = {
-        host: process.env.REDIS_HOST || '127.0.0.1',
-        port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-        password: process.env.REDIS_PASSWORD || undefined,
-      };
+      const host = process.env.REDIS_HOST || '127.0.0.1';
+      const port = process.env.REDIS_PORT || 6379;
+      const password = process.env.REDIS_PASSWORD;
       
-      // Some cloud providers (like Redis Labs) require TLS
-      if (config.host.includes('redislabs.com') || process.env.REDIS_TLS === 'true') {
-        config.tls = {}; 
+      if (password) {
+        // Use URL format for better compatibility with Cloud providers
+        config = `redis://default:${encodeURIComponent(password)}@${host}:${port}`;
+      } else {
+        config = { host, port };
+      }
+      
+      // Only use TLS if explicitly requested or if it's a secure redis port (usually 6380+)
+      // Note: Redis Labs often uses non-TLS ports for some plans.
+      if (process.env.REDIS_TLS === 'true') {
+        const url = typeof config === 'string' ? config.replace('redis://', 'rediss://') : config;
+        config = url;
       }
     }
 
