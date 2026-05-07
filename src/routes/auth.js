@@ -7,7 +7,8 @@ const {
   login, loginWithPassword, verifyOtp, qrLogin, getMe, updateProfile, refreshToken, logout,
   googleAuth, googleCallback,
   getMyQrToken, regenerateQrToken, refreshQrToken,
-  initTerminal, refreshTerminalQr, checkTerminalStatus, syncTerminal,
+  initTerminal, refreshTerminalQr, checkTerminalStatus, syncTerminal, setPassword,
+  getDashboardStats,
   loginValidation, verifyOtpValidation, qrLoginValidation,
   setup2FA, enable2FA, verify2FA, disable2FA, check2FAStatus,
 } = require('../controllers/authController');
@@ -52,6 +53,12 @@ router.get('/teacher/:id', authenticate, require('../controllers/authController'
 
 // PUT  /auth/profile — update academic profile (rollNo, branch, semester, etc.)
 router.put('/profile', authenticate, updateProfile);
+
+// POST /auth/set-password — set a new password for the account
+router.post('/set-password', authenticate, setPassword);
+
+// GET  /auth/dashboard-stats — get real-time stats for the user
+router.get('/dashboard-stats', authenticate, getDashboardStats);
 
 // POST /auth/refresh — exchange refresh token for new access token
 router.post('/refresh', authLimiter, refreshToken);

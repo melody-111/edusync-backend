@@ -14,30 +14,58 @@ const connectRedis = async () => {
   }
 
   try {
-    const config = process.env.REDIS_URL
-      ? process.env.REDIS_URL
-      : {
-          host: process.env.REDIS_HOST || '127.0.0.1',
-          port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-          password: process.env.REDIS_PASSWORD || undefined,
-          maxRetriesPerRequest: 3,
-          connectTimeout: 5000,
-          retryStrategy(times) {
-            if (times > 5) return null; // Stop retrying after 5 attempts
-            return Math.min(times * 300, 2000);
-          },
+    let config;
+    if (process.env.REDIS_URL) {
+      config = process.env.REDIS_URL;
+      // If URL is provided but password is in a separate env var, ioredis might need it explicitly
+      if (process.env.REDIS_PASSWORD && !config.includes(`:${process.env.REDIS_PASSWORD}@`)) {
+        config = {
+          url: process.env.REDIS_URL,
+          password: process.env.REDIS_PASSWORD,
         };
+      }
+    } else {
+      config = {
+        host: process.env.REDIS_HOST || '127.0.0.1',
+        port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+        password: process.env.REDIS_PASSWORD || undefined,
+      };
+    }
+
+    // Common options
+    const redisOptions = {
+      maxRetriesPerRequest: 3,
+      connectTimeout: 10000,
+      retryStrategy(times) {
+        if (times > 5) return null;
+        return Math.min(times * 300, 2000);
+      },
+    };
+
+    if (typeof config === 'object') {
+      Object.assign(config, redisOptions);
+    }
 
     redisClient = new Redis(config);
 
-    await redisClient.ping(); // Verify connection
-    _isAvailable = true;
-    logger.info('[Redis] Connected successfully.');
-
     redisClient.on('error', (err) => {
-      _isAvailable = false;
-      logger.error(`[Redis] Error: ${err.message}`);
+      if (err.message.includes('NOAUTH')) {
+        logger.error('[Redis] Auth failed. Falling back to in-memory cache.');
+        _isAvailable = false;
+      } else {
+        logger.error(`[Redis] Error: ${err.message}`);
+        _isAvailable = false;
+      }
     });
+
+    try {
+      await redisClient.ping(); // Verify connection
+      _isAvailable = true;
+      logger.info('[Redis] Connected successfully.');
+    } catch (pingErr) {
+      logger.error(`[Redis] Ping failed: ${pingErr.message}. Fallback to memory.`);
+      _isAvailable = false;
+    }
 
     redisClient.on('ready', () => {
       _isAvailable = true;
@@ -177,15 +205,40 @@ const cache = {
 // Used by Socket.io Redis adapter (needs separate pub/sub clients)
 const createRedisClient = () => {
   if (!process.env.REDIS_URL && !process.env.REDIS_HOST) return null;
-  return new Redis(
-    process.env.REDIS_URL || {
+
+  let config;
+  if (process.env.REDIS_URL) {
+    config = process.env.REDIS_URL;
+    if (process.env.REDIS_PASSWORD && !config.includes(`:${process.env.REDIS_PASSWORD}@`)) {
+      config = {
+        url: process.env.REDIS_URL,
+        password: process.env.REDIS_PASSWORD,
+      };
+    }
+  } else {
+    config = {
       host: process.env.REDIS_HOST || '127.0.0.1',
       port: parseInt(process.env.REDIS_PORT, 10) || 6379,
       password: process.env.REDIS_PASSWORD || undefined,
-      lazyConnect: true,
-      maxRetriesPerRequest: null, // Required for BullMQ compatibility
-    }
-  );
+    };
+  }
+
+  // Common adapter options
+  const options = {
+    lazyConnect: true,
+    maxRetriesPerRequest: null, // Required for BullMQ/Adapters
+    connectTimeout: 10000,
+  };
+
+  if (typeof config === 'object') {
+    Object.assign(config, options);
+  } else {
+    // If config is string (URL), we can't easily merge options here without ioredis parsing it first
+    // but ioredis constructor handles string + object options
+    return new Redis(config, options);
+  }
+
+  return new Redis(config);
 };
 
 const getRedisClient = () => redisClient;

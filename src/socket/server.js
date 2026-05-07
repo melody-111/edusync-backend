@@ -168,11 +168,15 @@ const initSocketServer = async (httpServer) => {
   // Setup Redis Adapter for multi-instance scaling
   try {
     const pubClient = createRedisClient();
-    const subClient = pubClient.duplicate();
-
-    await Promise.all([pubClient.connect(), subClient.connect()]);
-    _io.adapter(createAdapter(pubClient, subClient));
-    logger.info('Socket.io Redis adapter enabled');
+    if (pubClient) {
+      const subClient = pubClient.duplicate();
+      await Promise.all([
+        pubClient.connect().catch(() => {}),
+        subClient.connect().catch(() => {})
+      ]);
+      _io.adapter(createAdapter(pubClient, subClient));
+      logger.info('Socket.io Redis adapter enabled');
+    }
   } catch (err) {
     logger.warn(`Failed to setup Redis adapter: ${err.message}. Using single-instance memory adapter.`);
   }

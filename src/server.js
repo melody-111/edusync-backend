@@ -16,6 +16,15 @@ const start = async () => {
   await connectDB();
   await connectRedis();
 
+  // ─── Verify SMTP Config ────────────────────────────────────────────────────
+  const { verifyEmailConfig } = require('./utils/email');
+  const isSmtpValid = await verifyEmailConfig();
+  if (!isSmtpValid) {
+    logger.warn('SMTP Configuration is invalid. Emails will not be sent.');
+  } else {
+    logger.info('SMTP Configuration verified successfully.');
+  }
+
   // ─── Create Express App + HTTP Server ─────────────────────────────────────
   const app = createApp();
   const httpServer = http.createServer(app);

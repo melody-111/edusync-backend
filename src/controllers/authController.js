@@ -15,6 +15,8 @@ const TerminalSession = require('../models/TerminalSession');
 const { asyncHandler, sendSuccess, sendError, getClientIp } = require('../utils/helpers');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
+const File = require('../models/File');
+const Session = require('../models/Session');
 const ActivityLog = require('../models/ActivityLog');
 const {
   generateSecret,
@@ -29,7 +31,7 @@ const {
 const logActivity = async (data) => {
   try {
     // Fire and forget activity logging
-    ActivityLog.create(data).catch(() => {});
+    ActivityLog.create(data).catch(() => { });
   } catch {
     // Ignore log failure
   }
@@ -44,42 +46,42 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
         callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5001/auth/google/callback',
       },
-    async (accessToken, refreshToken, profile, done) => {
-      try {
-        const email = profile.emails?.[0]?.value;
-        if (!email) return done(new Error('No email from Google'));
+      async (accessToken, refreshToken, profile, done) => {
+        try {
+          const email = profile.emails?.[0]?.value;
+          if (!email) return done(new Error('No email from Google'));
 
-        let user = await User.findOne({ 'authProviders.google.googleId': profile.id });
+          let user = await User.findOne({ 'authProviders.google.googleId': profile.id });
 
-        if (!user) {
-          // Try to link to existing email account
-          user = await User.findOne({ email });
-          if (user) {
-            user.authProviders.google = { googleId: profile.id, accessToken };
-            user.isVerified = true;
-            if (!user.avatar) user.avatar = profile.photos?.[0]?.value || null;
-            await user.save();
-          } else {
-            // Create new user — default role: student (teacher role assigned manually)
-            user = await User.create({
-              email,
-              name: profile.displayName || email.split('@')[0],
-              avatar: profile.photos?.[0]?.value || null,
-              role: 'student',
-              isVerified: true,
-              authProviders: {
-                google: { googleId: profile.id, accessToken },
-              },
-            });
+          if (!user) {
+            // Try to link to existing email account
+            user = await User.findOne({ email });
+            if (user) {
+              user.authProviders.google = { googleId: profile.id, accessToken };
+              user.isVerified = true;
+              if (!user.avatar) user.avatar = profile.photos?.[0]?.value || null;
+              await user.save();
+            } else {
+              // Create new user — default role: student (teacher role assigned manually)
+              user = await User.create({
+                email,
+                name: profile.displayName || email.split('@')[0],
+                avatar: profile.photos?.[0]?.value || null,
+                role: 'student',
+                isVerified: true,
+                authProviders: {
+                  google: { googleId: profile.id, accessToken },
+                },
+              });
+            }
           }
-        }
 
-        return done(null, user);
-      } catch (err) {
-        return done(err);
+          return done(null, user);
+        } catch (err) {
+          return done(err);
+        }
       }
-    }
-  )
+    )
   );
 }
 
@@ -128,6 +130,25 @@ const loginWithPassword = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /auth/set-password
+ * Accepts: { password }
+ */
+const setPassword = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password) return sendError(res, 'Password is required', 400);
+
+  const user = await User.findById(req.user._id);
+  if (!user) return sendError(res, 'User not found', 404);
+
+  await user.setPassword(password);
+  await user.save({ validateBeforeSave: false });
+
+  logActivity({ userId: user._id, actorRole: user.role, action: 'auth.password.set', category: 'auth', ip: getClientIp(req) });
+
+  return sendSuccess(res, null, 'Password set successfully');
+});
+
+/**
  * POST /auth/login
  * Accepts: { email, role, name, rollNumber, course, branch, semester, year, section, institutionType, subjectId, subjectName, gmail }
  * Sends OTP to email or phone based on input
@@ -138,7 +159,7 @@ const login = asyncHandler(async (req, res) => {
   // Detect if input is email or phone
   const isEmail = email.includes('@');
   const isPhone = /^\d{10}$/.test(email.replace(/[\s-]/g, ''));
-  
+
   if (!isEmail && !isPhone) {
     return sendError(res, 'Please enter a valid email or phone number', 400);
   }
@@ -172,7 +193,7 @@ const login = asyncHandler(async (req, res) => {
     }
 
     user = await User.create(userData);
-    
+
     // Set password if provided
     if (req.body.password) {
       await user.setPassword(req.body.password);
@@ -244,7 +265,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
     console.log('[DEV MODE] OTP bypassed with dev code:', DEV_OTP_CODE);
     // Find user by email since we're bypassing OTP
     let user = await User.findOne({ email: email.toLowerCase() });
-    
+
     // If user doesn't exist, create them for dev mode
     if (!user) {
       console.log('[DEV MODE] User not found, creating for dev bypass');
@@ -260,7 +281,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
         classroomId: 'Class 1'
       });
     }
-    
+
     if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
     user.isVerified = true;
@@ -315,10 +336,10 @@ const verifyOtp = asyncHandler(async (req, res) => {
     const { getSocketServer } = require('../socket/server');
     const io = getSocketServer();
     if (io) {
-      const targetRoom = user.classroomId 
-        ? `classroom:${user.classroomId}` 
+      const targetRoom = user.classroomId
+        ? `classroom:${user.classroomId}`
         : `edu:${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
-      
+
       io.to(targetRoom).emit('teacher:online', {
         teacherName: user.name,
         deskId: user.deskId,
@@ -448,7 +469,7 @@ const logout = asyncHandler(async (req, res) => {
   // Clear refresh token and invalidate active sessions
   const Session = require('../models/Session');
   const activeSessions = await Session.find({ ownerId: req.user._id, status: 'active' });
-  
+
   for (const session of activeSessions) {
     session.status = 'ended';
     session.endedAt = new Date();
@@ -458,9 +479,9 @@ const logout = asyncHandler(async (req, res) => {
   }
 
   const newQrToken = crypto.randomBytes(32).toString('hex');
-  await User.findByIdAndUpdate(req.user._id, { 
+  await User.findByIdAndUpdate(req.user._id, {
     refreshToken: null,
-    qrLoginToken: newQrToken 
+    qrLoginToken: newQrToken
   });
 
   logActivity({ userId: req.user._id, actorRole: req.user.role, action: 'auth.logout', category: 'auth', ip: getClientIp(req) });
@@ -506,7 +527,7 @@ const signup = asyncHandler(async (req, res) => {
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
   const user = await User.findOne({ email: email.toLowerCase() });
-  
+
   if (!user) {
     // Return success anyway to prevent email enumeration
     return sendSuccess(res, null, 'If an account exists, a reset link has been sent');
@@ -514,7 +535,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
   const resetToken = crypto.randomBytes(32).toString('hex');
   const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-  
+
   user.resetPasswordToken = hashedToken;
   user.resetPasswordExpire = Date.now() + 3600000; // 1 hour
   await user.save({ validateBeforeSave: false });
@@ -722,10 +743,10 @@ const initTerminal = asyncHandler(async (req, res) => {
   });
 
   // Paylod for teacher mobile app (must scan this)
-  const payload = JSON.stringify({ 
-    type: 'terminal_sync', 
-    terminalId, 
-    qrToken 
+  const payload = JSON.stringify({
+    type: 'terminal_sync',
+    terminalId,
+    qrToken
   });
 
   const qrCodeDataUrl = await QRCode.toDataURL(payload, {
@@ -767,10 +788,10 @@ const refreshTerminalQr = asyncHandler(async (req, res) => {
   await terminal.save();
 
   // Generate new QR code
-  const payload = JSON.stringify({ 
-    type: 'terminal_sync', 
-    terminalId, 
-    qrToken: newQrToken 
+  const payload = JSON.stringify({
+    type: 'terminal_sync',
+    terminalId,
+    qrToken: newQrToken
   });
 
   const qrCodeDataUrl = await QRCode.toDataURL(payload, {
@@ -787,9 +808,9 @@ const refreshTerminalQr = asyncHandler(async (req, res) => {
     details: { terminalId },
   });
 
-  return sendSuccess(res, { 
-    terminalId, 
-    qrCodeDataUrl, 
+  return sendSuccess(res, {
+    terminalId,
+    qrCodeDataUrl,
     expiresIn: 65,
     message: 'QR code refreshed successfully'
   }, 'Terminal QR code refreshed');
@@ -825,7 +846,7 @@ const syncTerminal = asyncHandler(async (req, res) => {
   const user = req.user;
 
   if (!['teacher', 'student'].includes(user.role)) {
-     return sendError(res, 'Invalid role for terminal sync', 403);
+    return sendError(res, 'Invalid role for terminal sync', 403);
   }
 
   const terminal = await TerminalSession.findOne({ terminalId, qrToken, status: 'pending' });
@@ -852,10 +873,10 @@ const syncTerminal = asyncHandler(async (req, res) => {
   // Notify students/screens in the same classroom/branch that the teacher is online
   const io = getSocketServer();
   if (io) {
-    const targetRoom = user.classroomId 
-      ? `classroom:${user.classroomId}` 
+    const targetRoom = user.classroomId
+      ? `classroom:${user.classroomId}`
       : `edu:${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
-    
+
     io.to(targetRoom).emit('teacher:online', {
       teacherName: user.name,
       deskId: user.deskId,
@@ -877,7 +898,7 @@ const syncTerminal = asyncHandler(async (req, res) => {
 // Search teacher by ID or deskId
 const searchTeacher = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  
+
   // Search by deskId or _id
   const teacher = await User.findOne({
     $or: [
@@ -912,7 +933,7 @@ const searchTeacher = asyncHandler(async (req, res) => {
 // Generate 2FA secret and QR code
 const setup2FA = asyncHandler(async (req, res) => {
   const user = req.user;
-  
+
   // Only admin can enable 2FA
   if (user.role !== 'admin') {
     return sendError(res, 'Only admin users can enable 2FA', 403);
@@ -987,6 +1008,31 @@ const check2FAStatus = asyncHandler(async (req, res) => {
   return sendSuccess(res, { enabled: isEnabled }, '2FA status retrieved');
 });
 
+/**
+ * GET /auth/dashboard-stats
+ */
+const getDashboardStats = asyncHandler(async (req, res) => {
+  const user = req.user;
+
+  const noteCount = await File.countDocuments({ ownerId: user._id, isDeleted: false });
+  const activeSessionCount = await Session.countDocuments({ 
+    $or: [
+      { teacherId: user._id, status: 'active' }, 
+      { participants: user._id, status: 'active' }
+    ] 
+  });
+  
+  // Total interaction count from activity logs
+  const interactionCount = await ActivityLog.countDocuments({ userId: user._id });
+
+  return sendSuccess(res, {
+    noteCount,
+    activeSessionCount,
+    interactionCount,
+    lastSync: new Date().toISOString()
+  });
+});
+
 module.exports = {
   login,
   loginWithPassword,
@@ -1001,6 +1047,7 @@ module.exports = {
   verify2FA,
   disable2FA: disable2FAEndpoint,
   check2FAStatus,
+  setPassword,
   signup,
   forgotPassword,
   resetPassword,
@@ -1014,6 +1061,7 @@ module.exports = {
   checkTerminalStatus,
   syncTerminal,
   searchTeacher,
+  getDashboardStats,
   loginValidation,
   verifyOtpValidation,
   qrLoginValidation,
