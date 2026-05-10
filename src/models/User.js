@@ -55,8 +55,10 @@ const userSchema = new mongoose.Schema(
     branch: { type: String, trim: true, default: null },
     course: { type: String, trim: true, default: null },
     gmail: { type: String, trim: true, default: null },
+    className: { type: String, trim: true, default: null }, // Added for school students
+    idNumber: { type: String, trim: true, default: null }, // Employee ID or Staff Number
     institutionName: { type: String, trim: true, default: null },
-    institutionType: { type: String, enum: ['school', 'college'], default: 'college' },
+    institutionType: { type: String, enum: ['school', 'college', 'university'], default: 'university' },
     section: { type: String, trim: true, default: null },
     subjectId: { type: String, trim: true, default: null }, // For teachers
     subjectName: { type: String, trim: true, default: null }, // For teachers
@@ -110,6 +112,8 @@ userSchema.methods.toSafeObject = function () {
     year: this.year,
     branch: this.branch,
     course: this.course,
+    className: this.className,
+    idNumber: this.idNumber,
     subjectName: this.subjectName,
     deskId: this.deskId,
     classroomId: this.classroomId,

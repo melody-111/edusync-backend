@@ -493,19 +493,39 @@ const logout = asyncHandler(async (req, res) => {
  * POST /auth/signup
  */
 const signup = asyncHandler(async (req, res) => {
-  const { email, password, name, role } = req.body;
+  const { 
+    email, password, name, role, institutionType, 
+    className, rollNumber, subject, idNumber, 
+    branch, course, semester, year 
+  } = req.body;
 
   let user = await User.findOne({ email: email.toLowerCase() });
   if (user) {
     return sendError(res, 'User already exists', 400);
   }
 
-  user = await User.create({
+  const userData = {
     email: email.toLowerCase(),
     name: name || email.split('@')[0],
     role: role || 'student',
     isVerified: false,
-  });
+  };
+
+  if (institutionType) userData.institutionType = institutionType;
+  if (className) userData.className = className;
+  if (rollNumber) userData.rollNumber = rollNumber;
+  if (subject) userData.subjectId = subject; // Assuming 'subject' is mapped to subjectId
+  if (idNumber) userData.idNumber = idNumber;
+  if (branch) userData.branch = branch;
+  if (course) userData.course = course;
+  if (semester) userData.semester = semester;
+  if (year) userData.year = year;
+
+  if (userData.role === 'teacher') {
+    userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  user = await User.create(userData);
 
   if (password) {
     await user.setPassword(password);
