@@ -36,6 +36,9 @@ router.post('/signup', authLimiter, validate, require('../controllers/authContro
 // POST /auth/forgot-password — send password reset email
 router.post('/forgot-password', authLimiter, validate, require('../controllers/authController').forgotPassword);
 
+// POST /auth/verify-reset-otp — verify OTP for password reset
+router.post('/verify-reset-otp', otpLimiter, validate, require('../controllers/authController').verifyResetOtp);
+
 // POST /auth/reset-password — reset password with token
 router.post('/reset-password', authLimiter, validate, require('../controllers/authController').resetPassword);
 

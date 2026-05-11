@@ -888,14 +888,30 @@ const refreshQR = asyncHandler(async (req, res) => {
 
   const session = await Session.findOne({ sessionId, teacherId: user._id });
   if (!session) return sendError(res, 'Session not found or not authorized', 404);
+  if (session.status !== 'active') return sendError(res, 'Session is not active', 400);
 
-  const { qrToken, qrCodeDataUrl } = await generateSessionQR(sessionId);
-  
+  const { qrToken, qrCodeDataUrl, qrPayload } = await generateSessionQR(sessionId);
+
+  // Update both the token (for validation) and the data URL (for display)
   session.qrToken = qrToken;
+  session.qrCodeDataUrl = qrCodeDataUrl;
   await session.save();
 
-  // Broadcast the new QR if necessary, though usually frontend polls or teacher shows it
-  return sendSuccess(res, { qrCodeDataUrl, qrToken }, 'QR refreshed successfully');
+  // Also update cache so fast-path lookups see the new token
+  await cache.setJSON(`session:${sessionId}`, {
+    _id: session._id.toString(),
+    sessionId,
+    roomId: session.roomId,
+    teacherId: user._id.toString(),
+    ownerId: user._id.toString(),
+    sessionType: session.sessionType,
+    status: 'active',
+    qrToken,
+  }, 86400);
+
+  logger.info(`QR refreshed for session ${sessionId} by teacher ${user._id}`);
+
+  return sendSuccess(res, { qrCodeDataUrl, qrPayload, qrToken }, 'QR refreshed successfully');
 });
 
 module.exports = {

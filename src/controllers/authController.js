@@ -256,53 +256,9 @@ const login = asyncHandler(async (req, res) => {
 const verifyOtp = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
 
-  // Dev mode OTP bypass
-  const DEV_MODE = process.env.DEV_MODE === 'true' || process.env.NODE_ENV === 'development';
-  const DEV_OTP_CODE = process.env.DEV_OTP_CODE || '123456';
-  const DEV_OTP_BYPASS = process.env.DEV_OTP_BYPASS === 'true' || DEV_MODE;
+  // Dev mode OTP bypass removed for security
 
-  if (DEV_OTP_BYPASS && otp.toString() === DEV_OTP_CODE) {
-    console.log('[DEV MODE] OTP bypassed with dev code:', DEV_OTP_CODE);
-    // Find user by email since we're bypassing OTP
-    let user = await User.findOne({ email: email.toLowerCase() });
 
-    // If user doesn't exist, create them for dev mode
-    if (!user) {
-      console.log('[DEV MODE] User not found, creating for dev bypass');
-      user = await User.create({
-        email: email.toLowerCase(),
-        name: email.split('@')[0],
-        role: 'student',
-        isVerified: true,
-        isActive: true,
-        branch: 'CS',
-        year: '3rd',
-        semester: '6',
-        classroomId: 'Class 1'
-      });
-    }
-
-    if (!user.isActive) return sendError(res, 'Account disabled', 403);
-
-    user.isVerified = true;
-    user.lastLoginAt = new Date();
-    user.lastLoginIp = getClientIp(req);
-    await user.save();
-
-    const { accessToken, refreshToken } = generateTokenPair(user);
-
-    // Store refresh token hash
-    user.refreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
-    await user.save({ validateBeforeSave: false });
-
-    logActivity({ userId: user._id, actorRole: user.role, action: 'auth.login', category: 'auth', ip: getClientIp(req) });
-
-    return sendSuccess(res, {
-      accessToken,
-      refreshToken,
-      user: user.toSafeObject(),
-    }, 'Login successful (dev mode)');
-  }
 
   // Normal OTP verification
   const otpKey = `otp:${email.toLowerCase()}`;
@@ -550,42 +506,81 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
   if (!user) {
     // Return success anyway to prevent email enumeration
-    return sendSuccess(res, null, 'If an account exists, a reset link has been sent');
+    return sendSuccess(res, null, 'If an account exists, a reset OTP has been sent');
   }
 
-  const resetToken = crypto.randomBytes(32).toString('hex');
-  const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  const otp = generateOtp();
+  const otpKey = `pwdreset_otp:${email.toLowerCase()}`;
+  await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 600); // 10 mins
 
-  user.resetPasswordToken = hashedToken;
-  user.resetPasswordExpire = Date.now() + 3600000; // 1 hour
-  await user.save({ validateBeforeSave: false });
+  try {
+    await sendOtpEmail(user.email, otp, user.name);
+  } catch (err) {
+    logger.error(`OTP send failed: ${err.message}`);
+    return sendError(res, 'Failed to send OTP. Please try again.', 503);
+  }
 
-  // TODO: Send email with resetToken
-  logger.info(`Password reset token for ${email}: ${resetToken}`);
+  return sendSuccess(res, null, 'Password reset OTP sent to email');
+});
 
-  return sendSuccess(res, null, 'Password reset instructions sent');
+/**
+ * POST /auth/verify-reset-otp
+ */
+const verifyResetOtp = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return sendError(res, 'Email and OTP are required', 400);
+  }
+
+  const otpKey = `pwdreset_otp:${email.toLowerCase()}`;
+  const stored = await cache.getJSON(otpKey);
+
+  if (!stored) {
+    return sendError(res, 'OTP expired or not found. Please request a new one.', 400);
+  }
+
+  if (stored.otp !== otp.toString()) {
+    return sendError(res, 'Invalid OTP', 400);
+  }
+
+  // Do not consume the OTP yet, it will be consumed in resetPassword
+  return sendSuccess(res, null, 'OTP is valid');
 });
 
 /**
  * POST /auth/reset-password
  */
 const resetPassword = asyncHandler(async (req, res) => {
-  const { token, password } = req.body;
-  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+  // Mobile app passes: { email, otp, newPassword }
+  const { email, token, otp, newPassword } = req.body;
+  const actualOtp = otp || token; // Fallback for 'token' just in case
 
-  const user = await User.findOne({
-    resetPasswordToken: hashedToken,
-    resetPasswordExpire: { $gt: Date.now() }
-  });
-
-  if (!user) {
-    return sendError(res, 'Invalid or expired reset token', 400);
+  if (!email || !actualOtp || !newPassword) {
+    return sendError(res, 'Email, OTP, and new password are required', 400);
   }
 
-  await user.setPassword(password);
-  user.resetPasswordToken = undefined;
-  user.resetPasswordExpire = undefined;
-  await user.save();
+  const otpKey = `pwdreset_otp:${email.toLowerCase()}`;
+  const stored = await cache.getJSON(otpKey);
+
+  if (!stored) {
+    return sendError(res, 'OTP expired or not found. Please request a new one.', 400);
+  }
+
+  if (stored.otp !== actualOtp.toString()) {
+    return sendError(res, 'Invalid OTP', 400);
+  }
+
+  const user = await User.findById(stored.userId);
+  if (!user) {
+    return sendError(res, 'User not found', 404);
+  }
+
+  await user.setPassword(newPassword);
+  await user.save({ validateBeforeSave: false });
+
+  // Consume OTP immediately
+  await cache.del(otpKey);
 
   return sendSuccess(res, null, 'Password reset successful');
 });
@@ -1070,6 +1065,7 @@ module.exports = {
   setPassword,
   signup,
   forgotPassword,
+  verifyResetOtp,
   resetPassword,
   googleAuth,
   googleCallback,
