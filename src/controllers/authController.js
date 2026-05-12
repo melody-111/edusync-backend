@@ -452,47 +452,85 @@ const signup = asyncHandler(async (req, res) => {
   const { 
     email, password, name, role, institutionType, 
     className, rollNumber, subject, idNumber, 
-    branch, course, semester, year 
+    branch, course, semester, year, institutionName
   } = req.body;
 
+  if (!email) {
+    return sendError(res, 'Email is required', 400);
+  }
+
   let user = await User.findOne({ email: email.toLowerCase() });
+  
   if (user) {
-    return sendError(res, 'User already exists', 400);
-  }
+    // If the user has already verified and has a password, they are fully registered.
+    if (user.isVerified && user.authProviders?.local?.passwordHash) {
+      return sendError(res, 'User already exists', 400);
+    }
+    
+    // If they exist but are not fully verified (e.g. from a previous incomplete signup or Google login),
+    // we update their info instead of blocking them.
+    if (name) user.name = name;
+    if (role) user.role = role;
+    if (institutionType) user.institutionType = institutionType;
+    if (institutionName) user.institutionName = institutionName;
+    if (className) user.className = className;
+    if (rollNumber) user.rollNumber = rollNumber;
+    if (subject) user.subjectId = subject;
+    if (idNumber) user.idNumber = idNumber;
+    if (branch) user.branch = branch;
+    if (course) user.course = course;
+    if (semester) user.semester = semester;
+    if (year) user.year = year;
 
-  const userData = {
-    email: email.toLowerCase(),
-    name: name || email.split('@')[0],
-    role: role || 'student',
-    isVerified: false,
-  };
-
-  if (institutionType) userData.institutionType = institutionType;
-  if (className) userData.className = className;
-  if (rollNumber) userData.rollNumber = rollNumber;
-  if (subject) userData.subjectId = subject; // Assuming 'subject' is mapped to subjectId
-  if (idNumber) userData.idNumber = idNumber;
-  if (branch) userData.branch = branch;
-  if (course) userData.course = course;
-  if (semester) userData.semester = semester;
-  if (year) userData.year = year;
-
-  if (userData.role === 'teacher') {
-    userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
-  }
-
-  user = await User.create(userData);
-
-  if (password) {
-    await user.setPassword(password);
+    if (password) {
+      await user.setPassword(password);
+    }
     await user.save({ validateBeforeSave: false });
+  } else {
+    const userData = {
+      email: email.toLowerCase(),
+      name: name || email.split('@')[0],
+      role: role || 'student',
+      isVerified: false,
+    };
+
+    if (institutionType) userData.institutionType = institutionType;
+    if (institutionName) userData.institutionName = institutionName;
+    if (className) userData.className = className;
+    if (rollNumber) userData.rollNumber = rollNumber;
+    if (subject) userData.subjectId = subject; 
+    if (idNumber) userData.idNumber = idNumber;
+    if (branch) userData.branch = branch;
+    if (course) userData.course = course;
+    if (semester) userData.semester = semester;
+    if (year) userData.year = year;
+
+    if (userData.role === 'teacher') {
+      userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
+    }
+
+    user = await User.create(userData);
+
+    if (password) {
+      await user.setPassword(password);
+      await user.save({ validateBeforeSave: false });
+    }
   }
 
   const otp = generateOtp();
   const otpKey = `otp:${email.toLowerCase()}`;
   await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 300);
 
-  await sendOtpEmail(user.email, otp, user.name);
+  try {
+    await sendOtpEmail(user.email, otp, user.name);
+  } catch (err) {
+    // Graceful error handling for email sending in dev
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] Signup OTP for ${email}: ${otp}`);
+    } else {
+      return sendError(res, 'Failed to send OTP email', 500);
+    }
+  }
 
   return sendSuccess(res, { email: user.email }, 'Signup successful, please verify OTP');
 });
