@@ -221,6 +221,7 @@ const login = asyncHandler(async (req, res) => {
 
   await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, otpExpiry);
 
+  try {
     if (isEmail) {
       await sendOtpEmail(user.email, otp, user.name);
     } else if (isPhone) {
