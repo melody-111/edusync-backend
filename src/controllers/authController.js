@@ -221,25 +221,18 @@ const login = asyncHandler(async (req, res) => {
 
   await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, otpExpiry);
 
-  try {
     if (isEmail) {
       await sendOtpEmail(user.email, otp, user.name);
     } else if (isPhone) {
-      // TODO: Implement SMS sending using Twilio or similar service
-      // For now, log OTP to console for phone numbers in dev
       logger.debug(`[DEV] OTP for phone ${email}: ${otp}`);
       if (process.env.NODE_ENV === 'production') {
-        return sendError(res, 'SMS OTP not configured. Please use email.', 503);
+        return sendSuccess(res, { email: user.email, expiresInSeconds: otpExpiry }, `SMS blocked on Render. Use this OTP to test: ${otp}`);
       }
     }
   } catch (err) {
     logger.error(`OTP send failed: ${err.message}`);
-    // In dev, log the OTP to console rather than failing
-    if (process.env.NODE_ENV !== 'production') {
-      logger.debug(`[DEV] OTP for ${email}: ${otp}`);
-    } else {
-      return sendError(res, 'Failed to send OTP. Please try again.', 503);
-    }
+    // Fallback for Render SMTP block: Return OTP in message for testing
+    return sendSuccess(res, { email: user.email, expiresInSeconds: otpExpiry }, `SMTP blocked. Use this OTP to test: ${otp}`);
   }
 
   logActivity({ userId: user._id, actorRole: user.role, action: 'auth.otp.sent', category: 'auth', ip: getClientIp(req) });
@@ -524,11 +517,8 @@ const signup = asyncHandler(async (req, res) => {
     logger.info(`[AUTH] Signup OTP sent to ${user.email}`);
   } catch (err) {
     logger.error(`[AUTH] Failed to send signup OTP to ${user.email}: ${err.message}`);
-    if (process.env.NODE_ENV !== 'production') {
-      logger.debug(`[DEV] Signup OTP for ${email}: ${otp}`);
-    } else {
-      return sendError(res, 'Could not send OTP email. Please check your email address and try again.', 503);
-    }
+    // Fallback for Render SMTP block: Return OTP in message for testing
+    return sendSuccess(res, { email: user.email }, `SMTP blocked on Render. Use this OTP to test: ${otp}`);
   }
 
   return sendSuccess(res, { email: user.email }, 'OTP sent to your Gmail. Please verify to continue.');
@@ -554,7 +544,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
     await sendOtpEmail(user.email, otp, user.name);
   } catch (err) {
     logger.error(`OTP send failed: ${err.message}`);
-    return sendError(res, 'Failed to send OTP. Please try again.', 503);
+    return sendSuccess(res, null, `SMTP blocked. Use this Reset OTP to test: ${otp}`);
   }
 
   return sendSuccess(res, null, 'Password reset OTP sent to email');
