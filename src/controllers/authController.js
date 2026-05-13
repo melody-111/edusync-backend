@@ -462,13 +462,8 @@ const signup = asyncHandler(async (req, res) => {
   let user = await User.findOne({ email: email.toLowerCase() });
   
   if (user) {
-    // If the user has already verified and has a password, they are fully registered.
-    if (user.isVerified && user.authProviders?.local?.passwordHash) {
-      return sendError(res, 'User already exists', 400);
-    }
-    
-    // If they exist but are not fully verified (e.g. from a previous incomplete signup or Google login),
-    // we update their info instead of blocking them.
+    // Always allow re-signup: update info and resend OTP.
+    // This handles: incomplete signups, re-registrations, forgot-flow retries.
     if (name) user.name = name;
     if (role) user.role = role;
     if (institutionType) user.institutionType = institutionType;
@@ -487,6 +482,7 @@ const signup = asyncHandler(async (req, res) => {
     }
     await user.save({ validateBeforeSave: false });
   } else {
+    // Brand new user
     const userData = {
       email: email.toLowerCase(),
       name: name || email.split('@')[0],
@@ -517,22 +513,25 @@ const signup = asyncHandler(async (req, res) => {
     }
   }
 
+  // Generate a cryptographically random 6-digit OTP (never hardcoded)
   const otp = generateOtp();
   const otpKey = `otp:${email.toLowerCase()}`;
-  await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 300);
+  await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 300); // 5 min TTL
 
+  // Send OTP via Gmail SMTP
   try {
     await sendOtpEmail(user.email, otp, user.name);
+    logger.info(`[AUTH] Signup OTP sent to ${user.email}`);
   } catch (err) {
-    // Graceful error handling for email sending in dev
+    logger.error(`[AUTH] Failed to send signup OTP to ${user.email}: ${err.message}`);
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[DEV] Signup OTP for ${email}: ${otp}`);
+      logger.debug(`[DEV] Signup OTP for ${email}: ${otp}`);
     } else {
-      return sendError(res, 'Failed to send OTP email', 500);
+      return sendError(res, 'Could not send OTP email. Please check your email address and try again.', 503);
     }
   }
 
-  return sendSuccess(res, { email: user.email }, 'Signup successful, please verify OTP');
+  return sendSuccess(res, { email: user.email }, 'OTP sent to your Gmail. Please verify to continue.');
 });
 
 /**
