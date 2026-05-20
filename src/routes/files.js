@@ -6,7 +6,7 @@ const router = express.Router();
 const {
   uploadFile, getFile, getUserNotes, deleteFile,
   saveStrokeBatch, getPageStrokes,
-  createPage, getSessionPages, saveSnapshot,
+  createPage, getSessionPages,
 } = require('../controllers/fileController');
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
@@ -41,10 +41,6 @@ router.post('/pages', [
 
 router.get('/pages/session/:sessionId', getSessionPages);
 
-// Canvas snapshot (for PDF generation)
-router.post('/pages/snapshot', [
-  body('pageId').notEmpty(),
-  body('snapshotDataUrl').notEmpty(),
-], validate, saveSnapshot);
+
 
 module.exports = router;
