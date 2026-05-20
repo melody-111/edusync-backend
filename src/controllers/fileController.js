@@ -229,6 +229,5 @@ module.exports = {
   getPageStrokes,
   createPage,
   getSessionPages,
-  saveSnapshot,
   saveNote,
 };
