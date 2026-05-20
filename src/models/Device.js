@@ -10,6 +10,12 @@ const deviceSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    college_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'College',
+      required: true,
+      index: true,
+    },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -49,7 +55,7 @@ const deviceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-deviceSchema.index({ userId: 1, deviceType: 1 });
+deviceSchema.index({ college_id: 1, userId: 1, deviceType: 1 });
 deviceSchema.index({ activeSessionId: 1 });
 
 module.exports = mongoose.model('Device', deviceSchema);

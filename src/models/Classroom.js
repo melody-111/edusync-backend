@@ -4,6 +4,12 @@ const mongoose = require('mongoose');
 
 const classroomSchema = new mongoose.Schema(
   {
+    college_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'College',
+      required: true,
+      index: true,
+    },
     name: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
     teacherId: {
@@ -23,6 +29,7 @@ const classroomSchema = new mongoose.Schema(
         userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         joinedAt: { type: Date, default: new Date() },
         isActive: { type: Boolean, default: true },
+        isBlocked: { type: Boolean, default: false }, // Teacher can block student
       },
     ],
     sessions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Session' }],
@@ -34,6 +41,6 @@ const classroomSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-classroomSchema.index({ teacherId: 1, isActive: 1 });
+classroomSchema.index({ college_id: 1, teacherId: 1, isActive: 1 });
 
 module.exports = mongoose.model('Classroom', classroomSchema);

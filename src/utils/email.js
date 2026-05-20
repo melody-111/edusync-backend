@@ -16,41 +16,108 @@ const getTransporter = () => {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // ⚠️ CRITICAL for Render: Force IPv4
+    // Render free tier does NOT support IPv6.
+    // Gmail SMTP resolves to IPv6 (2607:f8b0:...) which causes ENETUNREACH.
+    // Setting family:4 forces DNS to only return IPv4 addresses.
+    family: 4,
     pool: true,
-    maxConnections: 5,
-    maxMessages: 100,
-    connectionTimeout: 5000,
-    greetingTimeout: 5000,
-    socketTimeout: 5000
+    maxConnections: 3,
+    maxMessages: 50,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000,
+    tls: {
+      rejectUnauthorized: false,
+    },
   });
 
   return transporter;
 };
 
 /**
- * Send an OTP email
+ * Send an OTP email — EduSync branded
  */
 const sendOtpEmail = async (to, otp, name = 'User') => {
   const html = `
-    <div style="font-family:Inter,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f9f9fb;border-radius:12px;">
-      <h2 style="color:#1a1a2e;margin-bottom:8px;">Digital Classroom</h2>
-      <p style="color:#555;font-size:15px;">Hi ${name},</p>
-      <p style="color:#555;font-size:15px;">Your login OTP is:</p>
-      <div style="background:#1a1a2e;color:#fff;font-size:36px;font-weight:700;letter-spacing:12px;padding:24px;text-align:center;border-radius:8px;margin:24px 0;">
-        ${otp}
-      </div>
-      <p style="color:#888;font-size:13px;">This OTP is valid for <strong>5 minutes</strong>. Do not share it with anyone.</p>
-      <hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;" />
-      <p style="color:#aaa;font-size:12px;">If you did not request this, ignore this email.</p>
-    </div>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+      <title>Your EduSync OTP</title>
+    </head>
+    <body style="margin:0;padding:0;background:#f4f6fb;font-family:'Inter',Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
+        <tr>
+          <td align="center">
+            <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+              
+              <!-- Header -->
+              <tr>
+                <td style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);padding:32px 40px;text-align:center;">
+                  <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:-0.5px;">EduSync</h1>
+                  <p style="color:#a0b4d6;margin:4px 0 0;font-size:13px;letter-spacing:2px;text-transform:uppercase;">Digital Classroom Platform</p>
+                </td>
+              </tr>
+
+              <!-- Body -->
+              <tr>
+                <td style="padding:40px;">
+                  <p style="color:#1a1a2e;font-size:16px;margin:0 0 8px;font-weight:600;">Hi ${name} 👋</p>
+                  <p style="color:#555;font-size:15px;margin:0 0 24px;line-height:1.6;">
+                    Your one-time verification code for EduSync is:
+                  </p>
+
+                  <!-- OTP Box -->
+                  <div style="background:#f0f2ff;border:2px dashed #6c63ff;border-radius:12px;padding:28px;text-align:center;margin:0 0 28px;">
+                    <div style="font-size:42px;font-weight:900;letter-spacing:14px;color:#1a1a2e;font-family:'Courier New',monospace;">
+                      ${otp}
+                    </div>
+                    <p style="color:#888;font-size:12px;margin:12px 0 0;">Valid for <strong>5 minutes</strong></p>
+                  </div>
+
+                  <!-- Security note -->
+                  <div style="background:#fff8e1;border-left:4px solid #ffc107;border-radius:4px;padding:12px 16px;margin-bottom:24px;">
+                    <p style="color:#856404;font-size:13px;margin:0;">
+                      🔒 <strong>Security Notice:</strong> Never share this OTP with anyone. EduSync will never ask for your OTP.
+                    </p>
+                  </div>
+
+                  <p style="color:#aaa;font-size:13px;margin:0;line-height:1.6;">
+                    If you did not request this, you can safely ignore this email. Your account is secure.
+                  </p>
+                </td>
+              </tr>
+
+              <!-- Footer -->
+              <tr>
+                <td style="background:#f8f9fa;padding:20px 40px;text-align:center;border-top:1px solid #e9ecef;">
+                  <p style="color:#aaa;font-size:12px;margin:0;">
+                    © ${new Date().getFullYear()} EduSync · Digital Classroom Platform<br/>
+                    This is an automated message, please do not reply.
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
   `;
 
-  return getTransporter().sendMail({
-    from: process.env.EMAIL_FROM || '"Digital Classroom" <noreply@classroom.app>',
+  const info = await getTransporter().sendMail({
+    from: process.env.EMAIL_FROM || '"EduSync 🎓" <noreply@edusync.app>',
     to,
-    subject: `${otp} — Your OTP for Digital Classroom`,
+    subject: `${otp} is your EduSync verification code`,
     html,
+    text: `Your EduSync OTP is: ${otp}\n\nValid for 5 minutes. Do not share with anyone.`,
   });
+
+  logger.info(`[Email] OTP sent to ${to} — MessageId: ${info.messageId}`);
+  return info;
 };
 
 /**
@@ -58,20 +125,54 @@ const sendOtpEmail = async (to, otp, name = 'User') => {
  */
 const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl, attachmentPath }) => {
   const html = `
-    <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#f9f9fb;border-radius:12px;">
-      <h2 style="color:#1a1a2e;">Your Class Notes are Ready</h2>
-      <p style="color:#555;font-size:15px;">Hi ${name},</p>
-      <p style="color:#555;font-size:15px;">Notes for <strong>${sessionTitle}</strong> have been saved and are ready to download.</p>
-      ${pdfUrl ? `<a href="${pdfUrl}" style="display:inline-block;background:#6c63ff;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">Download PDF</a>` : ''}
-      <p style="color:#aaa;font-size:12px;margin-top:24px;">This link expires in 30 days.</p>
-    </div>
+    <!DOCTYPE html>
+    <html>
+    <body style="margin:0;padding:0;background:#f4f6fb;font-family:'Inter',Arial,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
+        <tr>
+          <td align="center">
+            <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+              <tr>
+                <td style="background:linear-gradient(135deg,#1a1a2e,#0f3460);padding:32px 40px;text-align:center;">
+                  <h1 style="color:#fff;margin:0;font-size:22px;font-weight:800;">EduSync</h1>
+                  <p style="color:#a0b4d6;margin:4px 0 0;font-size:12px;letter-spacing:2px;text-transform:uppercase;">Class Notes Ready</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:40px;">
+                  <p style="color:#1a1a2e;font-size:16px;font-weight:600;margin:0 0 12px;">Hi ${name} 👋</p>
+                  <p style="color:#555;font-size:15px;line-height:1.6;margin:0 0 24px;">
+                    Your notes for <strong>${sessionTitle}</strong> have been saved and are ready!
+                  </p>
+                  ${pdfUrl ? `
+                    <div style="text-align:center;margin:24px 0;">
+                      <a href="${pdfUrl}" style="background:#6c63ff;color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+                        📥 Download PDF
+                      </a>
+                    </div>
+                  ` : ''}
+                  <p style="color:#aaa;font-size:12px;margin:24px 0 0;">This link expires in 30 days.</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="background:#f8f9fa;padding:20px;text-align:center;border-top:1px solid #e9ecef;">
+                  <p style="color:#aaa;font-size:12px;margin:0;">© ${new Date().getFullYear()} EduSync · Digital Classroom Platform</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
   `;
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM || '"Digital Classroom" <noreply@classroom.app>',
+    from: process.env.EMAIL_FROM || '"EduSync 🎓" <noreply@edusync.app>',
     to,
-    subject: `Class Notes: ${sessionTitle}`,
+    subject: `📚 Class Notes: ${sessionTitle}`,
     html,
+    text: `Your notes for ${sessionTitle} are ready. Download: ${pdfUrl || 'N/A'}`,
   };
 
   if (attachmentPath) {
@@ -92,20 +193,21 @@ const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl, attachmentPath }
  */
 const sendGeneralEmail = async ({ to, subject, html }) => {
   return getTransporter().sendMail({
-    from: process.env.EMAIL_FROM || '"Digital Classroom" <noreply@classroom.app>',
+    from: process.env.EMAIL_FROM || '"EduSync 🎓" <noreply@edusync.app>',
     to,
     subject,
     html,
+    text: 'Please view this email in an HTML-compatible email client.',
   });
 };
 
 const verifyEmailConfig = async () => {
   try {
     await getTransporter().verify();
-    logger.info('SMTP connection verified');
+    logger.info('[Email] SMTP connection verified ✓');
     return true;
   } catch (err) {
-    logger.warn(`SMTP verify failed: ${err.message}`);
+    logger.warn(`[Email] SMTP verify failed: ${err.message}`);
     return false;
   }
 };

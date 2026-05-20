@@ -2,6 +2,7 @@
 
 const { verifyAccessToken } = require('../utils/jwt');
 const User = require('../models/User');
+const College = require('../models/College');
 const { cache } = require('../config/redis');
 const { sendError } = require('../utils/helpers');
 const logger = require('../utils/logger');
@@ -12,7 +13,22 @@ const logger = require('../utils/logger');
  */
 const authenticate = async (req, res, next) => {
   try {
+    // ─── Admin Key Bypass for Server / Website Calls ─────────────────────────
+    const apiKey = req.headers['x-api-key'] || req.headers['x-admin-secret'];
+    const adminSecret = process.env.ADMIN_SECRET || 'EDUSYNC_ADMIN_2024';
     const authHeader = req.headers.authorization;
+    if (apiKey === adminSecret || (authHeader && (authHeader === `Bearer ${adminSecret}` || authHeader === adminSecret))) {
+       req.user = { 
+          _id: 'super_admin_101', 
+          name: 'EduSync Super Admin', 
+          email: process.env.ADMIN_EMAIL || 'sudhanshu@edusync.com',
+          role: 'super_admin',
+          isActive: true
+       };
+       req.tokenPayload = { sub: 'super_admin_101', role: 'super_admin' };
+       return next();
+    }
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return sendError(res, 'Authorization token required', 401);
     }
@@ -60,6 +76,15 @@ const authenticate = async (req, res, next) => {
     }
 
     if (!user.isActive) return sendError(res, 'Account is disabled', 403);
+
+    // Check college status
+    if (user.college_id || user.institutionName) {
+      const colQuery = user.college_id ? { _id: user.college_id } : { name: user.institutionName };
+      const college = await College.findOne(colQuery).lean();
+      if (college && (!college.isActive || college.status === 'suspended')) {
+        return sendError(res, `Your institution (${college.name}) account has been suspended by the administrator. Please contact school administration.`, 403);
+      }
+    }
 
     req.user = user;
     req.tokenPayload = decoded;

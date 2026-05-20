@@ -28,6 +28,7 @@ const uploadFile = asyncHandler(async (req, res) => {
   }
 
   const file = await File.create({
+    college_id: user.college_id,
     sessionId: sessionDoc?._id || null,
     ownerId: user._id,
     ownerRole: user.role,
@@ -191,18 +192,31 @@ const getSessionPages = asyncHandler(async (req, res) => {
   return sendSuccess(res, { pages });
 });
 
-// ─── Save Canvas Snapshot (for PDF) ───────────────────────────────────────────
-const saveSnapshot = asyncHandler(async (req, res) => {
-  const { pageId, snapshotDataUrl } = req.body;
+// ─── Save Note (Canvas Persistence) ─────────────────────────────────────────
+const saveNote = asyncHandler(async (req, res) => {
+  const { title, canvasData, fileType, folderId, id } = req.body;
+  const user = req.user;
 
-  const page = await Page.findOneAndUpdate(
-    { _id: pageId, ownerId: req.user._id },
-    { canvasSnapshot: snapshotDataUrl, snapshotUpdatedAt: new Date() },
-    { new: true }
-  );
-  if (!page) return sendError(res, 'Page not found or not yours', 404);
+  if (id && id.match(/^[0-9a-fA-F]{24}$/)) {
+    const file = await File.findOneAndUpdate(
+      { _id: id, ownerId: user._id },
+      { title, canvasData, updatedAt: new Date() },
+      { new: true }
+    );
+    if (file) return sendSuccess(res, { file }, 'Note updated');
+  }
 
-  return sendSuccess(res, null, 'Snapshot saved');
+  const file = await File.create({
+    college_id: user.college_id,
+    ownerId: user._id,
+    ownerRole: user.role,
+    fileType: fileType || 'notes',
+    title: title || 'Untitled Note',
+    canvasData,
+    folderId: folderId || null
+  });
+
+  return sendSuccess(res, { file }, 'Note saved', 201);
 });
 
 module.exports = {
@@ -216,4 +230,5 @@ module.exports = {
   createPage,
   getSessionPages,
   saveSnapshot,
+  saveNote,
 };

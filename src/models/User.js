@@ -15,6 +15,12 @@ const userSchema = new mongoose.Schema(
     },
     name: { type: String, required: true, trim: true },
     avatar: { type: String, default: null },
+    college_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'College',
+      index: true,
+      // Not strictly required for super_admin, but required for others
+    },
     role: {
       type: String,
       enum: ['teacher', 'student'],
@@ -62,7 +68,7 @@ const userSchema = new mongoose.Schema(
     section: { type: String, trim: true, default: null },
     subjectId: { type: String, trim: true, default: null }, // For teachers
     subjectName: { type: String, trim: true, default: null }, // For teachers
-    
+    teacherCode: { type: String, unique: true, sparse: true, trim: true, default: null }, // Unique code for students to join
     // QR Login Token (for scanning-to-login feature)
     qrLoginToken: { type: String, unique: true, sparse: true, select: false },
     lastQrRefreshAt: { type: Date, default: null },
@@ -105,6 +111,7 @@ userSchema.methods.toSafeObject = function () {
     name: this.name,
     avatar: this.avatar,
     role: this.role,
+    college_id: this.college_id,
     institutionName: this.institutionName,
     institutionType: this.institutionType,
     rollNumber: this.rollNumber,

@@ -124,33 +124,7 @@ const validateRoomAccess = async (roomId, userId) => {
 const initSocketServer = async (httpServer) => {
   _io = new Server(httpServer, {
     cors: {
-      // SECURITY: Never use '*' in production — allows any origin to connect
-      origin: (origin, cb) => {
-        const allowed = [
-          process.env.SOCKET_CORS_ORIGIN,
-          process.env.CLIENT_URL,
-          'http://localhost:3000',
-          'http://localhost:3001',
-          'http://localhost:3002',
-          'http://localhost:3003',
-          'http://localhost:5173',
-          'http://localhost:5174',
-          'http://localhost:8081',
-          'http://127.0.0.1:8081',
-          'http://127.0.0.1:3001',
-          'http://127.0.0.1:3002',
-          'http://192.168.18.109:3001',
-          'http://192.168.18.109:3002',
-          'http://192.168.18.114:3001',
-          'http://192.168.18.114:3002',
-        ].filter(Boolean);
-
-        // Allow if origin is in allowed list, or matches Vercel subdomain, or is null (for mobile apps)
-        if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
-          return cb(null, true);
-        }
-        return cb(new Error(`CORS blocked: ${origin}`));
-      },
+      origin: '*', // Relaxed for cross-device/mobile connectivity
       methods: ['GET', 'POST'],
       credentials: true,
     },
@@ -584,8 +558,11 @@ const initSocketServer = async (httpServer) => {
       });
 
       // 2. Global fallback (for students not in specific rooms)
-      console.log(`[SOCKET] Emitting class:started globally as fallback`);
+      console.log(`[SOCKET] Emitting class:started globally to all connected clients`);
       _io.emit('class:started', notificationPayload);
+      
+      // Verification log
+      console.log(`[SOCKET] Broadcast complete for ${subject}`);
 
       // 3. 🆕 Mobile Push Notifications
       try {

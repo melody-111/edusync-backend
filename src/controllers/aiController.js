@@ -21,12 +21,22 @@ const TEACHER_DAILY_LIMIT = 200;
  * Handles AI chat with role-based access control
  */
 const aiChat = asyncHandler(async (req, res) => {
-  let { messages, sessionId, context, message } = req.body;
+  let { messages, sessionId, context, message, image } = req.body;
   const user = req.user;
 
-  // Compatibility: Handle single message string
-  if (message && !messages) {
-    messages = [{ role: 'user', content: message }];
+  // Compatibility: Handle single message string or image
+  if ((message || image) && !messages) {
+    if (image) {
+      messages = [{ 
+        role: 'user', 
+        content: [
+          { type: 'text', text: message || 'Analyze this image and explain the problem and its solution.' },
+          { type: 'image_url', image_url: { url: image.startsWith('data:image') ? image : `data:image/jpeg;base64,${image}` } }
+        ]
+      }];
+    } else {
+      messages = [{ role: 'user', content: message }];
+    }
   }
 
 
@@ -249,11 +259,12 @@ const aiChatValidation = [
     .withMessage('Message role must be user or assistant'),
 
   body('messages.*.content')
-    .isString()
-    .isLength({ max: 4000 })
-    .withMessage('Message content too long'),
+    .optional() // made optional because it could be an array for vision
+    .custom((val) => typeof val === 'string' || Array.isArray(val))
+    .withMessage('Message content invalid format'),
   body('sessionId').optional().isString(),
   body('context').optional().isString().isLength({ max: 500 }),
+  body('image').optional().isString(),
 ];
 
 const generateImageValidation = [

@@ -187,6 +187,74 @@ const getRecordedClasses = asyncHandler(async (req, res) => {
   return sendSuccess(res, formatted);
 });
 
+// ─── Get All Students in College (Teacher) ────────────────────────────────────
+const getCollegeStudents = asyncHandler(async (req, res) => {
+  const User = require('../models/User');
+  if (!req.user.college_id) {
+    return sendError(res, 'You are not assigned to any college', 403);
+  }
+
+  // Fetch all students in the same college
+  const students = await User.find({
+    college_id: req.user.college_id,
+    role: 'student'
+  })
+    .select('name email avatar isVerified isActive')
+    .lean();
+
+  // For a unified "block" status, we could check if they are blocked in ANY of the teacher's classrooms.
+  // To keep it simple, we will return the students, and the frontend will map them.
+  // Fetch teacher's classrooms
+  const classrooms = await Classroom.find({ teacherId: req.user._id }).lean();
+  
+  // Create a block map: studentId -> true/false
+  const blockMap = {};
+  classrooms.forEach(c => {
+    c.students.forEach(s => {
+      if (s.isBlocked) {
+        blockMap[s.userId.toString()] = true;
+      }
+    });
+  });
+
+  const formattedStudents = students.map(s => ({
+    id: s._id,
+    name: s.name,
+    email: s.email,
+    status: s.isActive ? 'online' : 'offline', // simplified mock status
+    isBlocked: blockMap[s._id.toString()] || false,
+    avatar: s.avatar
+  }));
+
+  return sendSuccess(res, formattedStudents);
+});
+
+// ─── Block/Unblock Student in Teacher's Classrooms ────────────────────────────
+const toggleBlockStudent = asyncHandler(async (req, res) => {
+  const { studentId } = req.params;
+  
+  // Find all classrooms of this teacher where this student is enrolled
+  const classrooms = await Classroom.find({ teacherId: req.user._id, 'students.userId': studentId });
+  
+  if (!classrooms || classrooms.length === 0) {
+    return sendError(res, 'Student is not enrolled in any of your classrooms', 404);
+  }
+
+  let isBlockedNow = false;
+  
+  // Toggle block status across all classrooms taught by this teacher
+  for (const classroom of classrooms) {
+    const studentIndex = classroom.students.findIndex(s => s.userId.toString() === studentId);
+    if (studentIndex > -1) {
+      classroom.students[studentIndex].isBlocked = !classroom.students[studentIndex].isBlocked;
+      isBlockedNow = classroom.students[studentIndex].isBlocked;
+      await classroom.save();
+    }
+  }
+
+  return sendSuccess(res, { studentId, isBlocked: isBlockedNow }, `Student has been ${isBlockedNow ? 'blocked' : 'unblocked'} in your classrooms`);
+});
+
 // ─── Validation ───────────────────────────────────────────────────────────────
 const createClassroomValidation = [
   body('name').notEmpty().isString().isLength({ max: 100 }).trim().withMessage('Classroom name required'),
@@ -208,6 +276,10 @@ const classroomIdParamValidation = [
   param('id').isMongoId().withMessage('Invalid classroom ID'),
 ];
 
+const studentIdParamValidation = [
+  param('studentId').isMongoId().withMessage('Invalid student ID'),
+];
+
 module.exports = {
   createClassroom,
   getMyClassrooms,
@@ -219,8 +291,11 @@ module.exports = {
   getClassroomSessions,
   getEnrolledClassrooms,
   getRecordedClasses,
+  getCollegeStudents,
+  toggleBlockStudent,
   createClassroomValidation,
   enrollValidation,
   updateClassroomValidation,
   classroomIdParamValidation,
+  studentIdParamValidation,
 };

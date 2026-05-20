@@ -9,14 +9,17 @@ const {
   getAllSessions,
   updateUserStatus,
   updateUserRole,
+  createCollege,
+  getColleges,
+  toggleCollegeBlock,
 } = require('../controllers/adminController');
 const { authenticate } = require('../middleware/auth');
 const { apiLimiter } = require('../middleware/rateLimiter');
 const { sendError } = require('../utils/helpers');
 
-// Admin-only guard: only the designated admin email can access
+// Admin-only guard: only the designated admin email or super_admin role can access
 const requireAdmin = (req, res, next) => {
-  if (req.user.email !== process.env.ADMIN_EMAIL) {
+  if (!req.user || (req.user.role !== 'super_admin' && req.user.email !== process.env.ADMIN_EMAIL)) {
     return sendError(res, 'Administrator access required', 403);
   }
   next();
@@ -40,5 +43,15 @@ router.put('/users/:id/status', updateUserStatus);
 
 // PUT  /admin/users/:id/role     — change user role { role: 'teacher'|'student' }
 router.put('/users/:id/role', updateUserRole);
+
+// ─── College Routes ─────────────────────────────────────────────────────────
+// POST /admin/colleges             — create new college
+router.post('/colleges', createCollege);
+
+// GET  /admin/colleges             — list all colleges
+router.get('/colleges', getColleges);
+
+// PUT  /admin/colleges/:id/block   — block/unblock a college
+router.put('/colleges/:id/block', toggleCollegeBlock);
 
 module.exports = router;

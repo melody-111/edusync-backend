@@ -76,29 +76,10 @@ const createApp = () => {
   }));
 
   app.use(cors({
-    origin: [
-      process.env.CLIENT_URL || 'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:3002',
-      'http://localhost:3003',
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:8081',
-      'http://127.0.0.1:8081',
-      'http://127.0.0.1:5001',
-      'http://192.168.18.120:8081',
-      'http://192.168.18.120:5001',
-      'http://192.168.18.109:8081',
-      'http://192.168.18.109:5001',
-      process.env.MOBILE_APP_URL || 'capacitor://localhost',
-      // Vercel frontend URLs
-      'https://edu-sync-teacher-app.vercel.app',
-      'https://edu-sync-student-app.vercel.app',
-      /\.vercel\.app$/, // Correctly allow all Vercel subdomains using Regex
-    ],
+    origin: '*',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id', 'X-API-Key', 'X-Admin-Secret'],
   }));
 
   // ─── Trust Proxy ────────────────────────────────────────────────────────────

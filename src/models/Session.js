@@ -11,6 +11,12 @@ const sessionSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    college_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'College',
+      required: true,
+      index: true,
+    },
     roomId: {
       type: String,
       default: () => `room_${uuidv4()}`,
@@ -111,8 +117,8 @@ const sessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-sessionSchema.index({ status: 1, startedAt: -1 });
-sessionSchema.index({ teacherId: 1, status: 1 });
-sessionSchema.index({ ownerId: 1, status: 1 });
+sessionSchema.index({ college_id: 1, status: 1, startedAt: -1 });
+sessionSchema.index({ college_id: 1, teacherId: 1, status: 1 });
+sessionSchema.index({ college_id: 1, ownerId: 1, status: 1 });
 
 module.exports = mongoose.model('Session', sessionSchema);

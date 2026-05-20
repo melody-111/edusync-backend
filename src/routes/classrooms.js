@@ -17,7 +17,10 @@ const {
   enrollValidation,
   updateClassroomValidation,
   classroomIdParamValidation,
+  studentIdParamValidation,
   getRecordedClasses,
+  getCollegeStudents,
+  toggleBlockStudent,
 } = require('../controllers/classroomController');
 
 const { authenticate, requireRole } = require('../middleware/auth');
@@ -33,6 +36,10 @@ router.get('/mine', requireRole('teacher'), getMyClassrooms);
 router.put('/:id', requireRole('teacher'), updateClassroomValidation, validate, updateClassroom);
 router.delete('/:id', requireRole('teacher'), classroomIdParamValidation, validate, deleteClassroom);
 router.get('/:id/sessions', classroomIdParamValidation, validate, getClassroomSessions);
+
+// ─── Student Management (Teacher) ───
+router.get('/students', requireRole('teacher'), getCollegeStudents);
+router.post('/students/:studentId/block', requireRole('teacher'), studentIdParamValidation, validate, toggleBlockStudent);
 
 // Student routes
 router.post('/enroll', requireRole('student'), enrollValidation, validate, enrollStudent);

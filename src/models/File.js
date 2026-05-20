@@ -10,6 +10,12 @@ const fileSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    college_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'College',
+      required: true,
+      index: true,
+    },
     ownerId: {
       type: mongoose.Schema.Types.Mixed,
       ref: 'User',
@@ -53,8 +59,8 @@ const fileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-fileSchema.index({ sessionId: 1, ownerRole: 1 });
-fileSchema.index({ ownerId: 1, fileType: 1, isDeleted: 1 });
+fileSchema.index({ college_id: 1, sessionId: 1, ownerRole: 1 });
+fileSchema.index({ college_id: 1, ownerId: 1, fileType: 1, isDeleted: 1 });
 
 // Force re-registration to bust Mongoose model cache
 delete mongoose.models['File'];
