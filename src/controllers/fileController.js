@@ -7,6 +7,7 @@ const Session = require('../models/Session');
 const { compressStrokes, decompressStrokes } = require('../utils/compression');
 const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
+const { uploadCanvasData, deleteFromCloud, isCloudEnabled } = require('../services/cloudStorage');
 
 // ─── Upload File ───────────────────────────────────────────────────────────────
 const uploadFile = asyncHandler(async (req, res) => {
@@ -94,6 +95,12 @@ const deleteFile = asyncHandler(async (req, res) => {
   const fileId = req.params.id || req.params.noteId;
   const file = await File.findOne({ _id: fileId, ownerId: req.user._id });
   if (!file) return sendError(res, 'File not found', 404);
+
+  // Delete from Cloudinary if cloud-stored
+  if (file.cloudPublicId) {
+    const resourceType = file.cloudUrl && file.cloudUrl.includes('/image/') ? 'image' : 'raw';
+    deleteFromCloud(file.cloudPublicId, resourceType).catch(() => {});
+  }
 
   file.isDeleted = true;
   file.deletedAt = new Date();
@@ -197,26 +204,103 @@ const saveNote = asyncHandler(async (req, res) => {
   const { title, canvasData, fileType, folderId, id } = req.body;
   const user = req.user;
 
+  // ── UPDATE existing note ────────────────────────────────────────────────
   if (id && id.match(/^[0-9a-fA-F]{24}$/)) {
-    const file = await File.findOneAndUpdate(
-      { _id: id, ownerId: user._id },
-      { title, canvasData, updatedAt: new Date() },
-      { new: true }
-    );
-    if (file) return sendSuccess(res, { file }, 'Note updated');
+    const existingFile = await File.findOne({ _id: id, ownerId: user._id });
+    if (existingFile) {
+      const updateData = { title, updatedAt: new Date() };
+
+      // Try cloud upload if enabled
+      if (canvasData && isCloudEnabled()) {
+        // Delete old cloud file if exists
+        if (existingFile.cloudPublicId) {
+          const oldResourceType = existingFile.cloudUrl && existingFile.cloudUrl.includes('/image/') ? 'image' : 'raw';
+          deleteFromCloud(existingFile.cloudPublicId, oldResourceType).catch(() => {});
+        }
+
+        const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), id);
+        if (cloudResult) {
+          updateData.cloudUrl = cloudResult.cloudUrl;
+          updateData.cloudPublicId = cloudResult.cloudPublicId;
+          updateData.canvasData = null; // Don't store in MongoDB when cloud is used
+        } else {
+          // Fallback: store in MongoDB
+          updateData.canvasData = canvasData;
+        }
+      } else {
+        updateData.canvasData = canvasData;
+      }
+
+      const file = await File.findOneAndUpdate(
+        { _id: id, ownerId: user._id },
+        updateData,
+        { new: true }
+      );
+      return sendSuccess(res, { file }, 'Note updated');
+    }
   }
 
-  const file = await File.create({
+  // ── CREATE new note ─────────────────────────────────────────────────────
+  const createData = {
     college_id: user.college_id,
     ownerId: user._id,
     ownerRole: user.role,
     fileType: fileType || 'notes',
     title: title || 'Untitled Note',
-    canvasData,
-    folderId: folderId || null
-  });
+    folderId: folderId || null,
+  };
+
+  // Try cloud upload if enabled
+  if (canvasData && isCloudEnabled()) {
+    // Use a temp ID for naming; will update after creation
+    const tempId = Date.now().toString(36);
+    const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), tempId);
+    if (cloudResult) {
+      createData.cloudUrl = cloudResult.cloudUrl;
+      createData.cloudPublicId = cloudResult.cloudPublicId;
+      createData.canvasData = null;
+    } else {
+      // Fallback: store in MongoDB
+      createData.canvasData = canvasData;
+    }
+  } else {
+    createData.canvasData = canvasData;
+  }
+
+  const file = await File.create(createData);
 
   return sendSuccess(res, { file }, 'Note saved', 201);
+});
+
+const generatePdfFromNote = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const user = req.user;
+
+  const file = await File.findById(id).lean();
+  if (!file || file.isDeleted) return sendError(res, 'Note not found', 404);
+  if (!file.isBroadcast && file.ownerId.toString() !== user._id.toString()) {
+    return sendError(res, 'Access denied', 403);
+  }
+
+  try {
+    const pdfGenerator = require('../utils/pdfGenerator');
+    // For standalone notes, the 'canvasData' field contains the base64 image or json
+    // Our pdfGenerator can use 'canvasData' (if it's base64 png).
+    // Note: The teacher/student app will now send 'canvasData' as base64 or have an 'imageData' field.
+    // Let's pass the whole file object as noteData
+    const pdfBuffer = await pdfGenerator.generatePDF({
+      id: file._id.toString(),
+      title: file.title,
+      content: file.content || '',
+      canvasData: file.canvasData, // Should be base64 PNG for this to work
+      updatedAt: file.updatedAt
+    });
+
+    pdfGenerator.streamPDF(pdfBuffer, res, `${file.title || 'Note'}.pdf`);
+  } catch (err) {
+    console.error('PDF Generation Error:', err);
+    return sendError(res, 'Failed to generate PDF', 500);
+  }
 });
 
 module.exports = {
@@ -230,4 +314,5 @@ module.exports = {
   createPage,
   getSessionPages,
   saveNote,
+  generatePdfFromNote,
 };

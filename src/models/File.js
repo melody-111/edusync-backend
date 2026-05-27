@@ -36,6 +36,11 @@ const fileSchema = new mongoose.Schema(
     // Stores the entire session notes for multi-page reopening
     canvasData: { type: String, default: null },
 
+    // Cloud Storage (Cloudinary) — when enabled, canvasData is uploaded to cloud
+    // and only the URL is stored here. canvasData will be null for cloud-stored notes.
+    cloudUrl: { type: String, default: null },
+    cloudPublicId: { type: String, default: null },
+
 
     // Folder organisation (subject-wise folders)
     folderId: {

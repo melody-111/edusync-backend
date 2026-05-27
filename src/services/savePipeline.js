@@ -17,6 +17,7 @@ const Notification = require('../models/Notification');
 const { sendNotesEmail } = require('../utils/email');
 const { sendPushNotification } = require('../utils/push');
 const { strokeBatchBuffer } = require('../socket/strokeBuffer');
+const { downloadCanvasData } = require('./cloudStorage');
 const logger = require('../utils/logger');
 
 const PDF_DIR = path.join(process.cwd(), 'exports', 'pdfs');
@@ -253,78 +254,89 @@ const generateTeacherPdf = async (session) => {
  */
 const generatePdf = (session, user, userPages, teacherPages, role) => {
   return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
-      const chunks = [];
+    (async () => {
+      try {
+        const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
+        const chunks = [];
 
-      doc.on('data', (chunk) => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
+        doc.on('data', (chunk) => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
 
-      const allPages = [...teacherPages, ...userPages];
-      const dateStr = new Date(session.startedAt).toLocaleDateString('en-IN', { dateStyle: 'long' });
+        const allPages = [...teacherPages, ...userPages];
+        const dateStr = new Date(session.startedAt).toLocaleDateString('en-IN', { dateStyle: 'long' });
 
-      // ─ Header ────────────────────────────────────────────────────────────
-      doc.rect(0, 0, doc.page.width, 80).fill('#1a1a2e');
-      doc.fillColor('#a78bfa').fontSize(22).font('Helvetica-Bold')
-         .text(session.title || 'Untitled Session', 40, 20, { align: 'left' });
-      doc.fillColor('#cccccc').fontSize(10).font('Helvetica')
-         .text(`${role === 'teacher' ? 'Teacher' : 'Student'}: ${user.name}  |  Date: ${dateStr}  |  Pages: ${allPages.length}`, 40, 50);
+        // ─ Header ────────────────────────────────────────────────────────────
+        doc.rect(0, 0, doc.page.width, 80).fill('#1a1a2e');
+        doc.fillColor('#a78bfa').fontSize(22).font('Helvetica-Bold')
+           .text(session.title || 'Untitled Session', 40, 20, { align: 'left' });
+        doc.fillColor('#cccccc').fontSize(10).font('Helvetica')
+           .text(`${role === 'teacher' ? 'Teacher' : 'Student'}: ${user.name}  |  Date: ${dateStr}  |  Pages: ${allPages.length}`, 40, 50);
 
-      doc.moveDown(2);
+        doc.moveDown(2);
 
-      // ─ Pages ────────────────────────────────────────────────────────────
-      allPages.forEach((page, idx) => {
-        if (idx > 0) doc.addPage();
+        // ─ Pages ────────────────────────────────────────────────────────────
+        for (let idx = 0; idx < allPages.length; idx++) {
+          const page = allPages[idx];
+          if (idx > 0) doc.addPage();
 
-        const label = role === 'teacher'
-          ? `Teacher Notes — Page ${page.pageNumber}`
-          : (idx < teacherPages.length ? `Teacher Notes — Page ${page.pageNumber}` : `Your Notes — Page ${page.pageNumber}`);
+          const label = role === 'teacher'
+            ? `Teacher Notes \u2014 Page ${page.pageNumber}`
+            : (idx < teacherPages.length ? `Teacher Notes \u2014 Page ${page.pageNumber}` : `Your Notes \u2014 Page ${page.pageNumber}`);
 
-        // Page label bar
-        doc.rect(40, doc.y, doc.page.width - 80, 24).fill('#1a1a2e');
-        doc.fillColor('#ffffff').fontSize(11).font('Helvetica-Bold')
-           .text(label, 48, doc.y - 20);
-        doc.moveDown(1);
+          // Page label bar
+          doc.rect(40, doc.y, doc.page.width - 80, 24).fill('#1a1a2e');
+          doc.fillColor('#ffffff').fontSize(11).font('Helvetica-Bold')
+             .text(label, 48, doc.y - 20);
+          doc.moveDown(1);
 
-        // Embed canvas snapshot image if available
-        if (page.canvasSnapshot && page.canvasSnapshot.startsWith('data:image')) {
-          try {
-            const base64Data = page.canvasSnapshot.replace(/^data:image\/\w+;base64,/, '');
-            const imgBuffer = Buffer.from(base64Data, 'base64');
-            const availableWidth = doc.page.width - 80;
-            const availableHeight = doc.page.height - doc.y - 60;
-            doc.image(imgBuffer, 40, doc.y, {
-              fit: [availableWidth, availableHeight],
-              align: 'center',
-              valign: 'top',
-            });
-          } catch {
-            doc.fillColor('#999999').fontSize(10).font('Helvetica')
-               .text('(Canvas image could not be rendered)', { align: 'center' });
+          // Embed canvas snapshot image if available
+          // Support both direct canvasSnapshot and cloud-stored data
+          let snapshotData = page.canvasSnapshot;
+
+          // If no local snapshot but cloud URL exists, download from cloud
+          if (!snapshotData && page.cloudUrl) {
+            snapshotData = await downloadCanvasData(page.cloudUrl);
           }
-        } else {
-          doc.fillColor('#aaaaaa').fontSize(12).font('Helvetica')
-             .text('No content was captured on this page.', { align: 'center' });
+
+          if (snapshotData && snapshotData.startsWith('data:image')) {
+            try {
+              const base64Data = snapshotData.replace(/^data:image\/\w+;base64,/, '');
+              const imgBuffer = Buffer.from(base64Data, 'base64');
+              const availableWidth = doc.page.width - 80;
+              const availableHeight = doc.page.height - doc.y - 60;
+              doc.image(imgBuffer, 40, doc.y, {
+                fit: [availableWidth, availableHeight],
+                align: 'center',
+                valign: 'top',
+              });
+            } catch {
+              doc.fillColor('#999999').fontSize(10).font('Helvetica')
+                 .text('(Canvas image could not be rendered)', { align: 'center' });
+            }
+          } else {
+            doc.fillColor('#aaaaaa').fontSize(12).font('Helvetica')
+               .text('No content was captured on this page.', { align: 'center' });
+          }
         }
-      });
 
-      if (allPages.length === 0) {
-        doc.moveDown(4);
-        doc.fillColor('#999999').fontSize(14).font('Helvetica')
-           .text('No content was captured during this session.', { align: 'center' });
+        if (allPages.length === 0) {
+          doc.moveDown(4);
+          doc.fillColor('#999999').fontSize(14).font('Helvetica')
+             .text('No content was captured during this session.', { align: 'center' });
+        }
+
+        // ─ Footer ────────────────────────────────────────────────────────────
+        const footerY = doc.page.height - 40;
+        doc.page.margins.bottom = 0;
+        doc.fillColor('#aaaaaa').fontSize(9).font('Helvetica')
+           .text(`Generated by Digital Classroom \u2022 ${new Date().toLocaleString()}`, 40, footerY, { align: 'center', width: doc.page.width - 80 });
+
+        doc.end();
+      } catch (err) {
+        reject(err);
       }
-
-      // ─ Footer ────────────────────────────────────────────────────────────
-      const footerY = doc.page.height - 40;
-      doc.page.margins.bottom = 0;
-      doc.fillColor('#aaaaaa').fontSize(9).font('Helvetica')
-         .text(`Generated by Digital Classroom • ${new Date().toLocaleString()}`, 40, footerY, { align: 'center', width: doc.page.width - 80 });
-
-      doc.end();
-    } catch (err) {
-      reject(err);
-    }
+    })();
   });
 };
 

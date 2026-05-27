@@ -414,6 +414,29 @@ const initSocketServer = async (httpServer) => {
       });
     });
 
+    // ─── Teacher → Students: Coding Mode ──────────────────────────────────────
+    socket.on('code:mode:toggle', (payload) => {
+      if (userRole !== 'teacher') return;
+      const roomId = socket.currentRoomId;
+      if (!roomId) return;
+      socket.to(roomId).emit('code:mode:toggle', { ...payload, from: userId, ts: Date.now() });
+    });
+
+    socket.on('code:sync:teacher', (payload) => {
+      if (userRole !== 'teacher') return;
+      const roomId = socket.currentRoomId;
+      if (!roomId) return;
+      socket.to(roomId).emit('code:sync:teacher', { ...payload, from: userId, ts: Date.now() });
+    });
+
+    socket.on('code:sync:student', (payload) => {
+      if (userRole !== 'student') return;
+      const roomId = socket.currentRoomId;
+      if (!roomId) return;
+      // Emit to teacher only, or to the room. For now, broadcast to the room so teacher can see it.
+      socket.to(roomId).emit('code:sync:student', { ...payload, studentId: userId, studentName: user.name, ts: Date.now() });
+    });
+
     // ─── Teacher → Students: pageChange ──────────────────────────────────────
     socket.on('pageChange', (payload) => {
       if (userRole !== 'teacher') return;

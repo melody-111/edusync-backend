@@ -7,6 +7,7 @@ const {
   uploadFile, getFile, getUserNotes, deleteFile,
   saveStrokeBatch, getPageStrokes,
   createPage, getSessionPages,
+  saveNote, generatePdfFromNote
 } = require('../controllers/fileController');
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
@@ -21,6 +22,8 @@ router.get('/notes', getUserNotes);
 
 // File CRUD
 router.post('/upload', uploadLimiter, upload.single('file'), uploadFile);
+router.post('/note', saveNote);
+router.get('/:id/pdf', generatePdfFromNote);
 router.get('/:id', getFile);
 router.delete('/:id', deleteFile);
 
