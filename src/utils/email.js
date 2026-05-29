@@ -10,11 +10,11 @@ const getTransporter = () => {
 
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT, 10) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
+    port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
+    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : true, // Port 465 requires secure: true
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+      user: process.env.SMTP_USER || 'sudhanshusonkar210@gmail.com',
+      pass: process.env.SMTP_PASS || 'lscsqhdoxrxdngdp',
     },
     // ⚠️ CRITICAL for Render: Force IPv4
     // Render free tier does NOT support IPv6.
