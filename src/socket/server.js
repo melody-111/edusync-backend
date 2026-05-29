@@ -99,10 +99,10 @@ const authenticateSocket = async (socket, next) => {
 const validateRoomAccess = async (roomId, userId) => {
   // Dev Mode Bypass for local testing without DB records
   if (userId === '65c2a1e8f1d2e3b4c5d6e7f9' || userId === '65c2a1e8f1d2e3b4c5d6e7f8') {
-    return { 
-      valid: true, 
-      session: { _id: 'mock_session_123', sessionId: 'mock_session_123' }, 
-      participant: {} 
+    return {
+      valid: true,
+      session: { _id: 'mock_session_123', sessionId: 'mock_session_123' },
+      participant: {}
     };
   }
 
@@ -145,8 +145,8 @@ const initSocketServer = async (httpServer) => {
     if (pubClient) {
       const subClient = pubClient.duplicate();
       await Promise.all([
-        pubClient.connect().catch(() => {}),
-        subClient.connect().catch(() => {})
+        pubClient.connect().catch(() => { }),
+        subClient.connect().catch(() => { })
       ]);
       _io.adapter(createAdapter(pubClient, subClient));
       logger.info('Socket.io Redis adapter enabled');
@@ -549,7 +549,7 @@ const initSocketServer = async (httpServer) => {
     // ─── Teacher → All Students: class:started (Notify when class starts) ──────
     socket.on('class:started', async (payload) => {
       console.log(`[SOCKET] Received class:started from ${userId} (${userRole})`, payload);
-      
+
       if (userRole !== 'teacher') {
         console.warn(`[SOCKET] Rejecting class:started from non-teacher: ${userRole}`);
         return;
@@ -583,7 +583,7 @@ const initSocketServer = async (httpServer) => {
       // 2. Global fallback (for students not in specific rooms)
       console.log(`[SOCKET] Emitting class:started globally to all connected clients`);
       _io.emit('class:started', notificationPayload);
-      
+
       // Verification log
       console.log(`[SOCKET] Broadcast complete for ${subject}`);
 
