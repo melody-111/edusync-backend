@@ -920,7 +920,7 @@ const refreshTerminalQr = asyncHandler(async (req, res) => {
  */
 const checkTerminalStatus = asyncHandler(async (req, res) => {
   const { terminalId } = req.params;
-  const terminal = await TerminalSession.findOne({ terminalId });
+  const terminal = await TerminalSession.findOne({ terminalId }).populate('userId');
 
   if (!terminal) return sendError(res, 'Terminal session expired or not found', 404);
 
@@ -929,6 +929,7 @@ const checkTerminalStatus = asyncHandler(async (req, res) => {
       status: 'synced',
       accessToken: terminal.accessToken,
       refreshToken: terminal.refreshToken,
+      user: terminal.userId ? terminal.userId.toSafeObject() : null,
     }, 'Terminal synced successfully');
   }
 

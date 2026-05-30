@@ -5,21 +5,29 @@ const logger = require('./logger');
 
 let transporter = null;
 
-const getTransporter = () => {
-  if (transporter) return transporter;
+/**
+ * Build a fresh transporter — called on first use and after any config reset.
+ * KEY FIX: .env uses SMTP_PORT=587 + SMTP_SECURE=false (STARTTLS).
+ *   Port 587 → secure:false + requireTLS:true  (STARTTLS — Gmail recommended)
+ *   Port 465 → secure:true                     (SSL/TLS)
+ * Previously the code hardcoded port:465 + secure:true while .env said 587 + false → mismatch caused all emails to fail silently.
+ */
+const buildTransporter = () => {
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+  // Auto-detect: port 465 = implicit TLS (secure:true), anything else = STARTTLS (secure:false)
+  const useSecure = process.env.SMTP_SECURE
+    ? process.env.SMTP_SECURE === 'true'
+    : smtpPort === 465;
 
-  transporter = nodemailer.createTransport({
+  const config = {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
-    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : true, // Port 465 requires secure: true
+    port: smtpPort,
+    secure: useSecure,
     auth: {
-      user: process.env.SMTP_USER || 'sudhanshusonkar210@gmail.com',
-      pass: process.env.SMTP_PASS || 'lscsqhdoxrxdngdp',
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
     },
-    // ⚠️ CRITICAL for Render: Force IPv4
-    // Render free tier does NOT support IPv6.
-    // Gmail SMTP resolves to IPv6 (2607:f8b0:...) which causes ENETUNREACH.
-    // Setting family:4 forces DNS to only return IPv4 addresses.
+    // Force IPv4 — critical on Render/cloud hosts where IPv6 is blocked
     family: 4,
     pool: true,
     maxConnections: 3,
@@ -30,9 +38,28 @@ const getTransporter = () => {
     tls: {
       rejectUnauthorized: false,
     },
-  });
+  };
 
+  // STARTTLS requires requireTLS on port 587
+  if (!useSecure) {
+    config.requireTLS = true;
+  }
+
+  logger.info(`[Email] Building SMTP transporter: ${config.host}:${smtpPort} secure=${useSecure} user=${config.auth.user}`);
+  return nodemailer.createTransport(config);
+};
+
+const getTransporter = () => {
+  if (!transporter) {
+    transporter = buildTransporter();
+  }
   return transporter;
+};
+
+/** Call this if SMTP credentials change at runtime (e.g. env reload) */
+const resetTransporter = () => {
+  transporter = null;
+  logger.info('[Email] Transporter reset — will rebuild on next send');
 };
 
 /**
@@ -212,4 +239,4 @@ const verifyEmailConfig = async () => {
   }
 };
 
-module.exports = { sendOtpEmail, sendNotesEmail, sendGeneralEmail, verifyEmailConfig };
+module.exports = { sendOtpEmail, sendNotesEmail, sendGeneralEmail, verifyEmailConfig, resetTransporter };

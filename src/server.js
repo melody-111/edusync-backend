@@ -55,6 +55,17 @@ const start = async () => {
     await cleanupOldFiles(path.join(process.cwd(), 'logs'), 30);    // 30 days
   }, 86400000); // Every 24 hours
 
+  // ─── Keep Server Awake (Render Anti-Sleep) ────────────────────────────────
+  setInterval(async () => {
+    try {
+      const axios = require('axios');
+      await axios.get(`http://localhost:${PORT}/health`);
+      logger.info('[KeepAwake] Self-ping successful to prevent sleep.');
+    } catch (err) {
+      logger.error(`[KeepAwake] Self-ping failed: ${err.message}`);
+    }
+  }, 14 * 60 * 1000); // Every 14 minutes
+
 
   // ─── Graceful Shutdown ────────────────────────────────────────────────────
   const gracefulShutdown = async (signal) => {

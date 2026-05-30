@@ -41,22 +41,6 @@ const authenticateSocket = async (socket, next) => {
 
     if (!token) return next(new Error('Authentication token required'));
 
-    // ─── Dev Mode Bypass ──────────────────────────────────────────────────────
-    if (token === 'dev_token_secret' || token === 'dev_teacher_secret') {
-      socket.userId = token === 'dev_token_secret' ? '65c2a1e8f1d2e3b4c5d6e7f9' : '65c2a1e8f1d2e3b4c5d6e7f8';
-      socket.userRole = token === 'dev_token_secret' ? 'student' : 'teacher';
-      socket.user = {
-        _id: socket.userId,
-        name: 'Dev User',
-        role: socket.userRole,
-        classroomId: 'Class 1',
-        branch: 'CS',
-        year: '3rd',
-        semester: '6'
-      };
-      socket.isTerminal = false;
-      return next();
-    }
 
     let decoded;
     try {
@@ -178,6 +162,7 @@ const initSocketServer = async (httpServer) => {
     // Update device socket ID — fire-and-forget, don't await on hot path
     if (!socket.isTerminal) {
       Device.findOneAndUpdate(
+        { userId: socket.userId },
         { socketId: socket.id, status: 'online', lastConnectedAt: new Date() }
       ).catch(() => { });
     }

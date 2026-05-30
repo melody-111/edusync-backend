@@ -25,13 +25,10 @@ const searchVideos = asyncHandler(async (req, res) => {
         part: 'snippet',
         q: query,
         type: 'video',
-        videoCategoryId: '27', // Education Category ID
         maxResults: Math.min(parseInt(maxResults), 50),
         pageToken: pageToken || undefined,
         key: apiKey,
         relevanceLanguage: 'en',
-        videoEmbeddable: 'true',
-        videoSyndicated: 'true',
       },
     });
 

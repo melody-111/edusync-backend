@@ -35,23 +35,6 @@ const authenticate = async (req, res, next) => {
 
     const token = authHeader.split(' ')[1];
 
-    // ─── Dev Mode Bypass ──────────────────────────────────────────────────────
-    if (token === 'dev_token_secret' || token === 'dev_teacher_secret') {
-       const role = token === 'dev_token_secret' ? 'student' : 'teacher';
-       const userId = token === 'dev_token_secret' ? 'dev_student_101' : 'dev_teacher_99';
-       req.user = { 
-          _id: userId, 
-          name: 'Dev User', 
-          role,
-          isActive: true,
-          classroomId: 'Class 1',
-          branch: 'CS',
-          year: '3rd',
-          semester: '6'
-       };
-       req.tokenPayload = { sub: userId, role };
-       return next();
-    }
 
     let decoded;
     try {
