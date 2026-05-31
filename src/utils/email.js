@@ -20,12 +20,12 @@ const buildTransporter = () => {
     : smtpPort === 465;
 
   const config = {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    host: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
     port: smtpPort,
     secure: useSecure,
     auth: {
-      user: process.env.SMTP_USER || 'sudhanshusonkar210@gmail.com',
-      pass: process.env.SMTP_PASS || 'lscsqhdoxrxdngdp',
+      user: (process.env.SMTP_USER || 'sudhanshusonkar210@gmail.com').trim(),
+      pass: (process.env.SMTP_PASS || 'lscsqhdoxrxdngdp').trim(),
     },
     pool: true,
     maxConnections: 3,
