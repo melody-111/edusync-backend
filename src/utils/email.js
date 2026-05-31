@@ -27,8 +27,6 @@ const buildTransporter = () => {
       user: process.env.SMTP_USER || 'sudhanshusonkar210@gmail.com',
       pass: process.env.SMTP_PASS || 'lscsqhdoxrxdngdp',
     },
-    // Force IPv4 — critical on Render/cloud hosts where IPv6 is blocked
-    family: 4,
     pool: true,
     maxConnections: 3,
     maxMessages: 50,
