@@ -252,7 +252,7 @@ const login = asyncHandler(async (req, res) => {
 
   try {
     if (isEmail) {
-      sendOtpEmail(user.email, otp, user.name).catch(e => logger.error(`OTP Email failed: ${e.message}`));
+      await sendOtpEmail(user.email, otp, user.name);
       emailSent = true;
       logger.info(`[AUTH] OTP email delivered to ${user.email}`);
     } else if (isPhone) {
@@ -573,7 +573,7 @@ const signup = asyncHandler(async (req, res) => {
 
     let emailSent = false;
     try {
-      sendOtpEmail(email, otp, user.name || name).catch(e => logger.error(`OTP Email failed: ${e.message}`));
+      await sendOtpEmail(email, otp, user.name || name);
       emailSent = true;
       logger.info(`[AUTH] Signup OTP email sent to ${email}`);
     } catch (emailErr) {
@@ -613,7 +613,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
   let emailSent = false;
   try {
-    sendOtpEmail(user.email, otp, user.name).catch(e => logger.error(`OTP Email failed: ${e.message}`));
+    await sendOtpEmail(user.email, otp, user.name);
     emailSent = true;
     logger.info(`[AUTH] Password reset OTP email sent to ${user.email}`);
   } catch (err) {
