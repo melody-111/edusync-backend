@@ -13,7 +13,7 @@ let transporter = null;
  * Previously the code hardcoded port:465 + secure:true while .env said 587 + false → mismatch caused all emails to fail silently.
  */
 const buildTransporter = () => {
-  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+  const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
   // Auto-detect: port 465 = implicit TLS (secure:true), anything else = STARTTLS (secure:false)
   const useSecure = process.env.SMTP_SECURE
     ? process.env.SMTP_SECURE === 'true'
