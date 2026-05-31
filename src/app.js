@@ -162,6 +162,7 @@ const createApp = () => {
   // ─── API Routes ───────────────────────────────────────────────────────────────
   // Auth routes (individual routes have specific limiters)
   app.use('/auth', authRoutes);
+  app.use("/api/test-email", require("./routes/testEmail"));
 
   // Session routes with API limiter
   app.use('/session', apiLimiter, sessionRoutes);
