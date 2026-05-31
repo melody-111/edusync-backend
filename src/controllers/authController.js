@@ -112,6 +112,10 @@ const loginWithPassword = asyncHandler(async (req, res) => {
   const isValidPassword = await user.verifyPassword(password);
   if (!isValidPassword) return sendError(res, 'Invalid email or password', 401);
 
+  if (req.body.role && user.role !== req.body.role) {
+    return sendError(res, `Unauthorized: Access denied to ${req.body.role} app.`, 403);
+  }
+
   user.lastLoginAt = new Date();
   user.lastLoginIp = getClientIp(req);
   await user.save();
@@ -230,6 +234,11 @@ const login = asyncHandler(async (req, res) => {
     await user.save({ validateBeforeSave: false });
   }
 
+  // Enforce role check for existing users
+  if (role && user.role !== role) {
+    return sendError(res, `Unauthorized: You cannot access the ${role} app with a ${user.role} account.`, 403);
+  }
+
   const otp = generateOtp();
   const otpKey = `otp:${email.toLowerCase()}`;
   const otpExpiry = 5 * 60; // 5 minutes
@@ -243,7 +252,7 @@ const login = asyncHandler(async (req, res) => {
 
   try {
     if (isEmail) {
-      await sendOtpEmail(user.email, otp, user.name);
+      sendOtpEmail(user.email, otp, user.name).catch(e => logger.error(`OTP Email failed: ${e.message}`));
       emailSent = true;
       logger.info(`[AUTH] OTP email delivered to ${user.email}`);
     } else if (isPhone) {
@@ -295,6 +304,10 @@ const verifyOtp = asyncHandler(async (req, res) => {
   if (!user) return sendError(res, 'User not found', 404);
   if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
+  if (req.body.role && user.role !== req.body.role) {
+    return sendError(res, `Unauthorized: Access denied to ${req.body.role} app.`, 403);
+  }
+
   user.isVerified = true;
   user.lastLoginAt = new Date();
   user.lastLoginIp = getClientIp(req);
@@ -344,6 +357,10 @@ const qrLogin = asyncHandler(async (req, res) => {
   const user = await User.findOne({ qrLoginToken: qrToken }).select('+refreshToken');
   if (!user) return sendError(res, 'Invalid QR login token or user not found.', 401);
   if (!user.isActive) return sendError(res, 'Account disabled', 403);
+
+  if (req.body.role && user.role !== req.body.role) {
+    return sendError(res, `Unauthorized: Cannot login to ${req.body.role} app with ${user.role} account.`, 403);
+  }
 
   user.lastLoginAt = new Date();
   user.lastLoginIp = getClientIp(req);
@@ -556,7 +573,7 @@ const signup = asyncHandler(async (req, res) => {
 
     let emailSent = false;
     try {
-      await sendOtpEmail(email, otp, user.name || name);
+      sendOtpEmail(email, otp, user.name || name).catch(e => logger.error(`OTP Email failed: ${e.message}`));
       emailSent = true;
       logger.info(`[AUTH] Signup OTP email sent to ${email}`);
     } catch (emailErr) {
@@ -596,7 +613,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
   let emailSent = false;
   try {
-    await sendOtpEmail(user.email, otp, user.name);
+    sendOtpEmail(user.email, otp, user.name).catch(e => logger.error(`OTP Email failed: ${e.message}`));
     emailSent = true;
     logger.info(`[AUTH] Password reset OTP email sent to ${user.email}`);
   } catch (err) {

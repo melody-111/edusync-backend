@@ -124,6 +124,7 @@ userSchema.methods.toSafeObject = function () {
     subjectName: this.subjectName,
     deskId: this.deskId,
     classroomId: this.classroomId,
+    teacherCode: this.teacherCode,
     isVerified: this.isVerified,
     isActive: this.isActive,
     lastLoginAt: this.lastLoginAt,
