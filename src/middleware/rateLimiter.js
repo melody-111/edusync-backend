@@ -8,14 +8,26 @@ const { sendError } = require('../utils/helpers');
  * Supports Cloudflare IP headers automatically.
  */
 const createLimiter = (windowMs, max, message) => {
-  // Disable rate limiting for development
-  return (req, res, next) => next();
+  // Disable rate limiting ONLY if explicitly in Dev mode with OTP bypass on
+  if (process.env.DEV_MODE === 'true' && process.env.DEV_OTP_BYPASS === 'true') {
+    return (req, res, next) => next();
+  }
+  
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      sendError(res, 429, message || 'Too many requests. Please try again later.');
+    }
+  });
 };
 
-// Auth endpoints — Very strict to prevent brute-force
+// Auth endpoints — Strict to prevent brute-force and spam
 const authLimiter = createLimiter(
   15 * 60 * 1000, // 15 min
-  15,             // Allow 15 attempts (increased slightly from 10 for better UX)
+  5,              // Allow 5 attempts (Strict, as requested)
   'Too many login attempts. Please try again in 15 minutes.'
 );
 

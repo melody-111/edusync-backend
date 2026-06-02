@@ -552,12 +552,20 @@ const initSocketServer = async (httpServer) => {
         ts: Date.now()
       };
 
-      // 1. Target specific rooms
+      // 1. Target specific rooms based on teacher's payload
       const targetRooms = new Set();
       if (payload.roomId) targetRooms.add(payload.roomId);
-      if (user.classroomId) targetRooms.add(`classroom:${user.classroomId}`);
-      if (user.branch && user.year && user.semester) {
-        targetRooms.add(`edu:${user.branch}:${user.year}:${user.semester}`);
+      
+      if (payload.classroomId) {
+        targetRooms.add(`classroom:${payload.classroomId}`);
+      } else if (payload.branch && payload.year && payload.semester) {
+        targetRooms.add(`edu:${payload.branch}:${payload.year}:${payload.semester}`);
+      } else {
+        // Fallback to teacher's base profile if payload doesn't specify targeting
+        if (user.classroomId) targetRooms.add(`classroom:${user.classroomId}`);
+        if (user.branch && user.year && user.semester) {
+          targetRooms.add(`edu:${user.branch}:${user.year}:${user.semester}`);
+        }
       }
 
       targetRooms.forEach(room => {
@@ -565,22 +573,26 @@ const initSocketServer = async (httpServer) => {
         _io.to(room).emit('class:started', notificationPayload);
       });
 
-      // 2. Global fallback (for students not in specific rooms)
-      console.log(`[SOCKET] Emitting class:started globally to all connected clients`);
-      _io.emit('class:started', notificationPayload);
-
+      // Global fallback removed to ensure strict student targeting based on matching criteria
       // Verification log
-      console.log(`[SOCKET] Broadcast complete for ${subject}`);
+      console.log(`[SOCKET] Broadcast complete for ${subject} to ${targetRooms.size} targeted rooms`);
 
       // 3. 🆕 Mobile Push Notifications
       try {
         const { sendPushNotification } = require('../utils/push');
         const Device = require('../models/Device');
 
-        // Find students in this cohort/classroom
+        // Find students in this cohort/classroom based on strict matching
         const query = { role: 'student' };
-        if (user.classroomId) query.classroomId = user.classroomId;
-        else if (user.branch) {
+        if (payload.classroomId) {
+          query.classroomId = payload.classroomId;
+        } else if (payload.branch) {
+          query.branch = payload.branch;
+          if (payload.year) query.year = payload.year;
+          if (payload.semester) query.semester = payload.semester;
+        } else if (user.classroomId) {
+          query.classroomId = user.classroomId;
+        } else if (user.branch) {
           query.branch = user.branch;
           query.year = user.year;
           query.semester = user.semester;
