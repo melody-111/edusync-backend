@@ -399,6 +399,41 @@ const initSocketServer = async (httpServer) => {
       });
     });
 
+    // ─── Student → Teacher: State Tracking (Idle, Writing, YouTube, AI) ───────────
+    socket.on('student:state:update', (payload) => {
+      if (userRole !== 'student') return;
+      const roomId = socket.currentRoomId;
+      if (!roomId) return;
+      
+      // Update session participant state in DB occasionally if needed, but primarily broadcast real-time
+      socket.to(roomId).emit('student:state:changed', {
+        studentId: userId,
+        state: payload.state,
+        ts: Date.now()
+      });
+    });
+
+    // ─── Teacher → Student: Requests (Assignments, Notes) ───────────
+    socket.on('teacher:request:assignment', (payload) => {
+      if (userRole !== 'teacher') return;
+      if (payload.targetSocketId) {
+        _io.to(payload.targetSocketId).emit('teacher:requested:assignment', {
+           message: payload.message || 'Teacher requested your assignment.',
+           teacherName: user.name
+        });
+      }
+    });
+
+    socket.on('teacher:request:notes', (payload) => {
+      if (userRole !== 'teacher') return;
+      if (payload.targetSocketId) {
+        _io.to(payload.targetSocketId).emit('teacher:requested:notes', {
+           message: payload.message || 'Teacher requested your written notes.',
+           teacherName: user.name
+        });
+      }
+    });
+
     // ─── Teacher → Students: Coding Mode ──────────────────────────────────────
     socket.on('code:mode:toggle', (payload) => {
       if (userRole !== 'teacher') return;
