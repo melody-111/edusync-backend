@@ -10,6 +10,7 @@ const QRCode = require('qrcode');
 const User = require('../models/User');
 const { generateTokenPair, verifyRefreshToken } = require('../utils/jwt');
 const { sendOtpEmail } = require('../utils/email');
+const { sendOtpSms } = require('../utils/sms');
 const { cache } = require('../config/redis');
 const TerminalSession = require('../models/TerminalSession');
 const { asyncHandler, sendSuccess, sendError, getClientIp } = require('../utils/helpers');
@@ -164,7 +165,8 @@ const login = asyncHandler(async (req, res) => {
 
   // Detect if input is email or phone
   const isEmail = email.includes('@');
-  const isPhone = /^\d{10}$/.test(email.replace(/[\s-]/g, ''));
+  // Allow phone numbers starting with + and digits, minimum 10 digits
+  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(email.replace(/[\s-]/g, ''));
 
   if (!isEmail && !isPhone) {
     return sendError(res, 'Please enter a valid email or phone number', 400);
@@ -256,14 +258,19 @@ const login = asyncHandler(async (req, res) => {
       emailSent = true;
       logger.info(`[AUTH] OTP email delivered to ${user.email}`);
     } else if (isPhone) {
-      // Phone OTP via SMS not configured — log OTP to Render console
-      logger.warn(`[AUTH] SMS not configured. OTP for ${email}: ${otp}`);
+      // Format phone number to include +91 if no country code provided
+      let formattedPhone = email.replace(/[\s-]/g, '');
+      if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
+      
+      await sendOtpSms(formattedPhone, otp);
+      emailSent = true; // reusing emailSent variable for success flag
+      logger.info(`[AUTH] OTP SMS delivered to ${formattedPhone}`);
     }
   } catch (err) {
     smtpError = err.message;
     // Log OTP to server console so admin can see it in Render logs
-    logger.error(`[AUTH] SMTP failed for ${user.email}: ${err.message}`);
-    logger.warn(`[AUTH] FALLBACK OTP for ${user.email} → ${otp} (check Render logs)`);
+    logger.error(`[AUTH] OTP delivery failed for ${email}: ${err.message}`);
+    logger.warn(`[AUTH] FALLBACK OTP for ${email} → ${otp} (check Render logs)`);
   }
 
   logActivity({ userId: user._id, actorRole: user.role, action: 'auth.otp.sent', category: 'auth', ip: getClientIp(req) });
@@ -387,9 +394,9 @@ const qrLogin = asyncHandler(async (req, res) => {
  * Returns current user info
  */
 const getMe = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).lean();
+  const user = await User.findById(req.user._id);
   if (!user) return sendError(res, 'User not found', 404);
-  return sendSuccess(res, { user });
+  return sendSuccess(res, { user: user.toSafeObject() });
 });
 
 /**
@@ -571,13 +578,22 @@ const signup = asyncHandler(async (req, res) => {
 
     logger.info(`[AUTH] Signup OTP generated for: ${email} | cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'}`);
 
+    const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(email.replace(/[\s-]/g, ''));
     let emailSent = false;
     try {
-      await sendOtpEmail(email, otp, user.name || name);
-      emailSent = true;
-      logger.info(`[AUTH] Signup OTP email sent to ${email}`);
+      if (isPhone) {
+        let formattedPhone = email.replace(/[\s-]/g, '');
+        if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
+        await sendOtpSms(formattedPhone, otp);
+        emailSent = true;
+        logger.info(`[AUTH] Signup OTP SMS sent to ${formattedPhone}`);
+      } else {
+        await sendOtpEmail(email, otp, user.name || name);
+        emailSent = true;
+        logger.info(`[AUTH] Signup OTP email sent to ${email}`);
+      }
     } catch (emailErr) {
-      logger.error(`[AUTH] Signup email failed for ${email}: ${emailErr.message}`);
+      logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${emailErr.message}`);
       // Always log OTP to server console (visible in Render logs for admin)
       logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
     }
@@ -611,13 +627,22 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
   logger.info(`[AUTH] Password reset OTP generated for: ${email}`);
 
+  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(email.replace(/[\s-]/g, ''));
   let emailSent = false;
   try {
-    await sendOtpEmail(user.email, otp, user.name);
-    emailSent = true;
-    logger.info(`[AUTH] Password reset OTP email sent to ${user.email}`);
+    if (isPhone) {
+      let formattedPhone = email.replace(/[\s-]/g, '');
+      if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
+      await sendOtpSms(formattedPhone, otp);
+      emailSent = true;
+      logger.info(`[AUTH] Password reset OTP SMS sent to ${formattedPhone}`);
+    } else {
+      await sendOtpEmail(user.email, otp, user.name);
+      emailSent = true;
+      logger.info(`[AUTH] Password reset OTP email sent to ${user.email}`);
+    }
   } catch (err) {
-    logger.error(`[AUTH] Reset OTP email failed for ${user.email}: ${err.message}`);
+    logger.error(`[AUTH] Reset OTP delivery failed for ${user.email}: ${err.message}`);
     logger.warn(`[AUTH] FALLBACK Reset OTP for ${user.email} → ${otp}`);
   }
 

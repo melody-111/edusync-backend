@@ -72,8 +72,8 @@ const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => 
       });
       return { messageId: res.data.id, provider: 'resend' };
     } catch (err) {
-      logger.error(`[Email] Resend API failed: ${err.response?.data?.message || err.message}`);
-      throw new Error(`Resend API Error: ${err.response?.data?.message || err.message}`);
+      // Resend failed (e.g. domain not verified) — fall through to SMTP
+      logger.warn(`[Email] Resend API failed: ${err.response?.data?.message || err.message}. Falling back to SMTP...`);
     }
   }
   
