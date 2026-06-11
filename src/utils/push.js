@@ -53,34 +53,66 @@ try {
   logger.warn('Firebase push notifications disabled due to initialization error');
 }
 
+const axios = require('axios');
+
 /**
  * Send push notification to a list of device tokens
  */
 const sendPushNotification = async (tokens, title, body, data = {}) => {
-  if (!isInitialized || !tokens || tokens.length === 0) return;
+  if (!tokens || tokens.length === 0) return;
 
-  const message = {
-    notification: { title, body },
-    data: data,
-    tokens: Array.isArray(tokens) ? tokens : [tokens],
-    // Platform specific overrides
-    android: {
-      priority: 'high',
-      notification: { sound: 'default', clickAction: 'FLUTTER_NOTIFICATION_CLICK' }
-    },
-    apns: {
-      payload: {
-        aps: { sound: 'default', badge: 1 }
+  const arrayTokens = Array.isArray(tokens) ? tokens : [tokens];
+  const expoTokens = arrayTokens.filter(t => t.startsWith('ExponentPushToken'));
+  const fcmTokens = arrayTokens.filter(t => !t.startsWith('ExponentPushToken'));
+
+  // 1. Handle FCM Tokens
+  if (isInitialized && fcmTokens.length > 0) {
+    const message = {
+      notification: { title, body },
+      data: data,
+      tokens: fcmTokens,
+      // Platform specific overrides
+      android: {
+        priority: 'high',
+        notification: { sound: 'default', clickAction: 'FLUTTER_NOTIFICATION_CLICK' }
+      },
+      apns: {
+        payload: {
+          aps: { sound: 'default', badge: 1 }
+        }
       }
-    }
-  };
+    };
 
-  try {
-    const response = await admin.messaging().sendMulticast(message);
-    logger.debug(`FCM multicast success. ${response.successCount} sent, ${response.failureCount} failed.`);
-    return response;
-  } catch (error) {
-    logger.error('Error sending FCM notification:', error.message);
+    try {
+      const response = await admin.messaging().sendMulticast(message);
+      logger.debug(`FCM multicast success. ${response.successCount} sent, ${response.failureCount} failed.`);
+    } catch (error) {
+      logger.error('Error sending FCM notification:', error.message);
+    }
+  }
+
+  // 2. Handle Expo Tokens
+  if (expoTokens.length > 0) {
+    try {
+      const messages = expoTokens.map(token => ({
+        to: token,
+        sound: 'default',
+        title,
+        body,
+        data,
+      }));
+      
+      const response = await axios.post('https://exp.host/--/api/v2/push/send', messages, {
+        headers: {
+          'Accept': 'application/json',
+          'Accept-encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        }
+      });
+      logger.debug(`Expo push success. ${expoTokens.length} sent.`);
+    } catch (error) {
+      logger.error('Error sending Expo push notification:', error.message);
+    }
   }
 };
 

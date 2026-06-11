@@ -57,6 +57,8 @@ const sessionSchema = new mongoose.Schema(
     branch: { type: String, default: null },
     year: { type: String, default: null },
     semester: { type: String, default: null },
+    className: { type: String, default: null },
+    section: { type: String, default: null },
 
     // Library Integration
     folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },

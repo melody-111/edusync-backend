@@ -21,7 +21,7 @@ const logger = require('../utils/logger');
 
 // ─── Start Session ──────────────────────────────────────────────────────────
 const startSession = asyncHandler(async (req, res) => {
-  const { title, description, classroomId, folderId, fileId, branch, year, semester } = req.body;
+  const { title, description, classroomId, folderId, fileId, branch, year, semester, className, section, subject } = req.body;
   const teacher = req.user;
 
 
@@ -57,6 +57,8 @@ const startSession = asyncHandler(async (req, res) => {
     branch: branch || null,
     year: year || null,
     semester: semester || null,
+    className: className || null,
+    section: section || null,
     folderId: folderId || null,
     fileId: fileId || null,
     status: 'active',
@@ -141,6 +143,75 @@ const startSession = asyncHandler(async (req, res) => {
     } else {
       io.emit('class:started', broadcastData);
     }
+  }
+
+  // Trigger push notifications for targeted students
+  if (teacher.college_id) {
+    // Run asynchronously to avoid blocking the response
+    (async () => {
+      try {
+        const User = require('../models/User');
+        const Device = require('../models/Device');
+        const { sendPushNotification } = require('../utils/push');
+        
+        // Build query dynamically based on what teacher provided
+        const query = { role: 'student', college_id: teacher.college_id, isActive: true };
+        
+        let hasFilters = false;
+        if (session.branch || session.year || session.semester) {
+          if (session.branch) query.branch = session.branch;
+          if (session.year) query.year = session.year;
+          if (session.semester) query.semester = session.semester;
+          hasFilters = true;
+        }
+        
+        if (session.className || session.section) {
+          if (session.className) query.className = session.className;
+          if (session.section) query.section = session.section;
+          hasFilters = true;
+        }
+        
+        if (session.subject) {
+           query.subjectName = session.subject; // Strict match if subject is provided
+           hasFilters = true;
+        }
+
+        // Only send if we actually have some filters (don't spam the whole college)
+        if (hasFilters) {
+          // Find students matching the criteria
+          const targetStudents = await User.find(query).select('_id').lean();
+
+          if (targetStudents.length > 0) {
+            const studentIds = targetStudents.map(s => s._id);
+            
+            // Get all active push tokens for these students
+            const devices = await Device.find({
+              userId: { $in: studentIds },
+              isActive: true,
+              fcmToken: { $ne: null }
+            }).select('fcmToken').lean();
+
+            const tokens = devices.map(d => d.fcmToken);
+            
+            if (tokens.length > 0) {
+              const label = session.className 
+                ? `${session.className} ${session.section || ''}` 
+                : `${session.branch || ''} ${session.year || ''} ${session.semester || ''}`;
+                
+              await sendPushNotification(
+                tokens,
+                'Your Teacher is Live! 🔴',
+                `${teacher.name} started a live session for ${label.trim()}. Tap to join now.`,
+                { type: 'CLASS_STARTED', deskId: teacher.deskId }
+              );
+              logger.info(`Push notification sent to ${tokens.length} devices for ${label.trim()}`);
+            }
+          }
+        }
+      } catch (err) {
+        logger.error('Failed to send targeted push notifications: ' + err.message);
+      }
+    })();
   }
 
   return sendSuccess(res, {
