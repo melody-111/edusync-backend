@@ -25,6 +25,12 @@ const collegeSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
     },
+    country: {
+      type: String,
+      default: 'India',
+      trim: true,
+      index: true,
+    },
     logo_url: {
       type: String,
       default: null,

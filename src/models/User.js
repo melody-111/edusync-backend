@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['teacher', 'student'],
+      enum: ['teacher', 'student', 'super_admin'],
       required: true,
       index: true,
     },
@@ -39,6 +39,10 @@ const userSchema = new mongoose.Schema(
         otpExpiry: { type: Date, default: null },
         lastOtpSentAt: { type: Date, default: null },
       },
+    },
+    cloudStorageUsed: {
+      type: Number,
+      default: 0,
     },
 
     // Tokens
@@ -68,7 +72,7 @@ const userSchema = new mongoose.Schema(
     section: { type: String, trim: true, default: null },
     subjectId: { type: String, trim: true, default: null }, // For teachers
     subjectName: { type: String, trim: true, default: null }, // For teachers
-    teacherCode: { type: String, unique: true, sparse: true, trim: true, default: null }, // Unique code for students to join
+    teacherCode: { type: String, unique: true, sparse: true, trim: true }, // Unique code for students to join
     // QR Login Token (for scanning-to-login feature)
     qrLoginToken: { type: String, unique: true, sparse: true, select: false },
     lastQrRefreshAt: { type: Date, default: null },

@@ -12,6 +12,10 @@ const {
   createCollege,
   getColleges,
   toggleCollegeBlock,
+  sendUserNotification,
+  getSystemStats,
+  getUserActivities,
+  getSystemLogs,
 } = require('../controllers/adminController');
 const { authenticate } = require('../middleware/auth');
 const { apiLimiter } = require('../middleware/rateLimiter');
@@ -32,6 +36,12 @@ router.use(requireAdmin);
 // GET  /admin/stats              — global dashboard stats
 router.get('/stats', getGlobalStats);
 
+// GET  /admin/logs               — system wide audit logs
+router.get('/logs', getSystemLogs);
+
+// GET  /admin/system-stats       — hardware usage (CPU/RAM)
+router.get('/system-stats', getSystemStats);
+
 // GET  /admin/users              — all users (filter: ?role=teacher&isActive=true)
 router.get('/users', getAllUsers);
 
@@ -43,6 +53,12 @@ router.put('/users/:id/status', updateUserStatus);
 
 // PUT  /admin/users/:id/role     — change user role { role: 'teacher'|'student' }
 router.put('/users/:id/role', updateUserRole);
+
+// POST /admin/users/:id/notify   — send notification/warning to user
+router.post('/users/:id/notify', sendUserNotification);
+
+// GET  /admin/users/:id/activities — get PDF/file activities for user
+router.get('/users/:id/activities', getUserActivities);
 
 // ─── College Routes ─────────────────────────────────────────────────────────
 // POST /admin/colleges             — create new college

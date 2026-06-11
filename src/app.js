@@ -120,8 +120,9 @@ const createApp = () => {
   app.use(passport.initialize());
 
   // ─── Static File Serving ─────────────────────────────────────────────────────
-  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
-  app.use('/exports', express.static(path.join(process.cwd(), 'exports')));
+  const staticOptions = { maxAge: '1d', etag: true };
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), staticOptions));
+  app.use('/exports', express.static(path.join(process.cwd(), 'exports'), staticOptions));
 
   // ─── Health Check ─────────────────────────────────────────────────────────────
   app.get('/health', async (req, res) => {

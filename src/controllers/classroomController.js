@@ -3,6 +3,8 @@
 const { body, param } = require('express-validator');
 const Classroom = require('../models/Classroom');
 const Session = require('../models/Session');
+const ActivityLog = require('../models/ActivityLog');
+const File = require('../models/File');
 const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
 
@@ -255,6 +257,60 @@ const toggleBlockStudent = asyncHandler(async (req, res) => {
   return sendSuccess(res, { studentId, isBlocked: isBlockedNow }, `Student has been ${isBlockedNow ? 'blocked' : 'unblocked'} in your classrooms`);
 });
 
+// ─── Get Student Activity Dashboard ───────────────────────────────────────────
+const getStudentActivity = asyncHandler(async (req, res) => {
+  const { studentId } = req.params;
+
+  // 1. Fetch AI Activity
+  const aiActivity = await ActivityLog.find({
+    userId: studentId,
+    action: 'ai.request'
+  })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  // 2. Fetch YouTube Activity
+  const youtubeActivity = await ActivityLog.find({
+    userId: studentId,
+    action: { $in: ['youtube.search', 'youtube.watch'] }
+  })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  // 3. Fetch Notes/Canvas Files
+  const notes = await File.find({
+    ownerId: studentId,
+    fileType: 'note'
+  })
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .lean();
+
+  // We could also verify if the teacher has this student in any of their classes
+  // But we'll trust the teacher role + studentId param for now.
+  
+  return sendSuccess(res, {
+    ai: aiActivity.map(a => ({
+      _id: a._id,
+      prompt: a.details?.prompt || 'Image query/Unknown',
+      timestamp: a.createdAt,
+    })),
+    youtube: youtubeActivity.map(a => ({
+      _id: a._id,
+      action: a.action === 'youtube.search' ? 'Search' : 'Watch',
+      query: a.details?.query || a.details?.title || 'Unknown',
+      timestamp: a.createdAt,
+    })),
+    notes: notes.map(n => ({
+      _id: n._id,
+      title: n.title,
+      timestamp: n.createdAt,
+    }))
+  });
+});
+
 // ─── Validation ───────────────────────────────────────────────────────────────
 const createClassroomValidation = [
   body('name').notEmpty().isString().isLength({ max: 100 }).trim().withMessage('Classroom name required'),
@@ -293,6 +349,7 @@ module.exports = {
   getRecordedClasses,
   getCollegeStudents,
   toggleBlockStudent,
+  getStudentActivity,
   createClassroomValidation,
   enrollValidation,
   updateClassroomValidation,

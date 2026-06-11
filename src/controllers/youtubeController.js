@@ -2,6 +2,7 @@
 
 const axios = require('axios');
 const { asyncHandler, sendSuccess, sendError } = require('../utils/helpers');
+const { logActivity } = require('../utils/activityLogger');
 
 /**
  * Search YouTube videos
@@ -41,6 +42,16 @@ const searchVideos = asyncHandler(async (req, res) => {
       publishedAt: item.snippet.publishedAt,
     }));
 
+    if (req.user) {
+      logActivity({
+        userId: req.user._id,
+        actorRole: req.user.role || 'student',
+        action: 'youtube.search',
+        category: 'media',
+        details: { query, maxResults },
+      });
+    }
+
     return sendSuccess(res, {
       videos,
       nextPageToken: response.data.nextPageToken,
@@ -79,6 +90,17 @@ const getVideoDetails = asyncHandler(async (req, res) => {
     }
 
     const video = response.data.items[0];
+
+    if (req.user) {
+      logActivity({
+        userId: req.user._id,
+        actorRole: req.user.role || 'student',
+        action: 'youtube.watch',
+        category: 'media',
+        details: { videoId: video.id, title: video.snippet.title },
+      });
+    }
+
     return sendSuccess(res, {
       videoId: video.id,
       title: video.snippet.title,

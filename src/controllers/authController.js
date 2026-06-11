@@ -13,6 +13,7 @@ const { sendOtpEmail } = require('../utils/email');
 const { sendOtpSms } = require('../utils/sms');
 const { cache } = require('../config/redis');
 const TerminalSession = require('../models/TerminalSession');
+const College = require('../models/College');
 const { asyncHandler, sendSuccess, sendError, getClientIp } = require('../utils/helpers');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
@@ -20,7 +21,6 @@ const File = require('../models/File');
 const Session = require('../models/Session');
 const ActivityLog = require('../models/ActivityLog');
 const Classroom = require('../models/Classroom');
-const College = require('../models/College');
 const {
   generateSecret,
   generateQRCode,
@@ -115,6 +115,14 @@ const loginWithPassword = asyncHandler(async (req, res) => {
 
   if (req.body.role && user.role !== req.body.role) {
     return sendError(res, `Unauthorized: Access denied to ${req.body.role} app.`, 403);
+  }
+
+  const twoFAEnabled = await is2FAEnabled(user._id.toString());
+  if (twoFAEnabled) {
+    return sendSuccess(res, {
+      requires2FA: true,
+      userId: user._id,
+    }, '2FA required');
   }
 
   user.lastLoginAt = new Date();
@@ -537,6 +545,16 @@ const signup = asyncHandler(async (req, res) => {
       if (password) {
         await user.setPassword(password);
       }
+      
+      // Auto-create/assign College
+      if (user.institutionName) {
+        let collegeDoc = await College.findOne({ name: new RegExp(`^${user.institutionName}$`, 'i') });
+        if (!collegeDoc) {
+          collegeDoc = await College.create({ name: user.institutionName });
+        }
+        user.college_id = collegeDoc._id;
+      }
+      
       await user.save({ validateBeforeSave: false });
     } else {
       logger.info(`[AUTH] Creating new user: ${email}`);
@@ -561,6 +579,15 @@ const signup = asyncHandler(async (req, res) => {
       if (userData.role === 'teacher') {
         userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
         userData.teacherCode = userData.deskId;
+      }
+      
+      // Auto-create/assign College
+      if (userData.institutionName) {
+        let collegeDoc = await College.findOne({ name: new RegExp(`^${userData.institutionName}$`, 'i') });
+        if (!collegeDoc) {
+          collegeDoc = await College.create({ name: userData.institutionName });
+        }
+        userData.college_id = collegeDoc._id;
       }
 
       user = await User.create(userData);
@@ -1125,7 +1152,25 @@ const verify2FA = asyncHandler(async (req, res) => {
     return sendError(res, 'Invalid 2FA token', 400);
   }
 
-  return sendSuccess(res, null, '2FA verified successfully');
+  const user = await User.findById(userId);
+  if (!user) return sendError(res, 'User not found', 404);
+
+  user.lastLoginAt = new Date();
+  user.lastLoginIp = getClientIp(req);
+  await user.save();
+
+  const { accessToken, refreshToken } = generateTokenPair(user);
+
+  user.refreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
+  await user.save({ validateBeforeSave: false });
+
+  logActivity({ userId: user._id, actorRole: user.role, action: 'auth.login.2fa', category: 'auth', ip: getClientIp(req) });
+
+  return sendSuccess(res, {
+    accessToken,
+    refreshToken,
+    user: user.toSafeObject(),
+  }, '2FA verified and logged in successfully');
 });
 
 // Disable 2FA

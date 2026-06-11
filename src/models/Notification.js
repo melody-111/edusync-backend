@@ -24,6 +24,8 @@ const notificationSchema = new mongoose.Schema(
         'notes_saved',
         'control_update',
         'general',
+        'warning',
+        'account_alert',
       ],
       required: true,
     },

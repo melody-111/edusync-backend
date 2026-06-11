@@ -103,12 +103,20 @@ const aiChat = asyncHandler(async (req, res) => {
   // Increment usage counter
   await cache.set(usageKey, (usage + 1).toString(), 86400); // Expires end of day
 
+  // Extract the prompt for logging
+  let promptText = '';
+  if (message && typeof message === 'string') promptText = message;
+  else if (messages && messages.length > 0) {
+    const lastMsg = messages[messages.length - 1].content;
+    promptText = typeof lastMsg === 'string' ? lastMsg : 'Complex/Image query';
+  }
+
   logActivity({
     userId: user._id,
     actorRole: user.role,
     action: 'ai.request',
     category: 'ai',
-    details: { sessionId, model: AI_MODEL, usage: usage + 1 },
+    details: { sessionId, model: AI_MODEL, usage: usage + 1, prompt: promptText },
   });
 
   const choice = aiResponse.choices?.[0];
@@ -213,7 +221,7 @@ const generateImage = asyncHandler(async (req, res) => {
     actorRole: user.role,
     action: 'ai.image.generate',
     category: 'ai',
-    details: { sessionId, size },
+    details: { sessionId, size, prompt },
   });
 
   return sendSuccess(res, {

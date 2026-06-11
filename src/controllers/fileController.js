@@ -4,6 +4,7 @@ const File = require('../models/File');
 const Page = require('../models/Page');
 const StrokeBatch = require('../models/StrokeBatch');
 const Session = require('../models/Session');
+const User = require('../models/User');
 const { compressStrokes, decompressStrokes } = require('../utils/compression');
 const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
@@ -41,6 +42,9 @@ const uploadFile = asyncHandler(async (req, res) => {
     url: `/uploads/files/${req.file.filename}`,
     isBroadcast: isBroadcast === 'true',
   });
+
+  // Update user storage
+  await User.findByIdAndUpdate(user._id, { $inc: { cloudStorageUsed: req.file.size || 0 } }).catch(() => {});
 
   logActivity({
     sessionId: sessionDoc?._id,
@@ -105,6 +109,18 @@ const deleteFile = asyncHandler(async (req, res) => {
   file.isDeleted = true;
   file.deletedAt = new Date();
   await file.save();
+
+  // Free up storage
+  await User.findByIdAndUpdate(req.user._id, { $inc: { cloudStorageUsed: -(file.size || 0) } }).catch(() => {});
+
+  // Log activity
+  logActivity({
+    userId: req.user._id,
+    actorRole: req.user.role,
+    action: 'file.delete',
+    category: 'file',
+    details: { fileId: file._id, title: file.title },
+  });
 
   return sendSuccess(res, null, 'File deleted');
 });
@@ -294,6 +310,14 @@ const generatePdfFromNote = asyncHandler(async (req, res) => {
       content: file.content || '',
       canvasData: file.canvasData, // Should be base64 PNG for this to work
       updatedAt: file.updatedAt
+    });
+
+    logActivity({
+      userId: user._id,
+      actorRole: user.role,
+      action: 'pdf.export',
+      category: 'file',
+      details: { fileId: file._id, title: file.title },
     });
 
     pdfGenerator.streamPDF(pdfBuffer, res, `${file.title || 'Note'}.pdf`);
