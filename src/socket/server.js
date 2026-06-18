@@ -81,14 +81,7 @@ const authenticateSocket = async (socket, next) => {
 
 // ─── Room Validation Helper ────────────────────────────────────────────────────
 const validateRoomAccess = async (roomId, userId) => {
-  // Dev Mode Bypass for local testing without DB records
-  if (userId === '65c2a1e8f1d2e3b4c5d6e7f9' || userId === '65c2a1e8f1d2e3b4c5d6e7f8') {
-    return {
-      valid: true,
-      session: { _id: 'mock_session_123', sessionId: 'mock_session_123' },
-      participant: {}
-    };
-  }
+
 
   // Look up session by roomId
   const session = await Session.findOne({ roomId, status: 'active' }).lean();
@@ -636,9 +629,7 @@ const initSocketServer = async (httpServer) => {
         const User = require('../models/User');
         const studentIds = (await User.find(query).select('_id')).map(s => s._id);
 
-        if (studentIds.length > 0 || socket.userId === '65c2a1e8f1d2e3b4c5d6e7f8') {
-          // For dev mode, we might not have real DB users, so we can't find tokens easily
-          // but we'll try for any online student devices
+        if (studentIds.length > 0) {
           const studentDevices = await Device.find({
             userId: { $in: studentIds },
             status: 'online',

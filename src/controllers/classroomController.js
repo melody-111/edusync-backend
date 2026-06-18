@@ -223,7 +223,7 @@ const getCollegeStudents = asyncHandler(async (req, res) => {
     id: s._id,
     name: s.name,
     email: s.email,
-    status: s.isActive ? 'online' : 'offline', // simplified mock status
+    status: s.isActive ? 'online' : 'offline',
     isBlocked: blockMap[s._id.toString()] || false,
     avatar: s.avatar
   }));

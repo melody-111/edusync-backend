@@ -611,17 +611,22 @@ const signup = asyncHandler(async (req, res) => {
       if (isPhone) {
         let formattedPhone = email.replace(/[\s-]/g, '');
         if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-        await sendOtpSms(formattedPhone, otp);
+        sendOtpSms(formattedPhone, otp).catch(err => {
+          logger.error(`[AUTH] Signup OTP delivery failed for ${formattedPhone}: ${err.message}`);
+          logger.warn(`[AUTH] FALLBACK OTP for signup ${formattedPhone} → ${otp}`);
+        });
         emailSent = true;
-        logger.info(`[AUTH] Signup OTP SMS sent to ${formattedPhone}`);
+        logger.info(`[AUTH] Signup OTP SMS processing started for ${formattedPhone}`);
       } else {
-        await sendOtpEmail(email, otp, user.name || name);
+        sendOtpEmail(email, otp, user.name || name).catch(err => {
+          logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${err.message}`);
+          logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
+        });
         emailSent = true;
-        logger.info(`[AUTH] Signup OTP email sent to ${email}`);
+        logger.info(`[AUTH] Signup OTP email processing started for ${email}`);
       }
     } catch (emailErr) {
       logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${emailErr.message}`);
-      // Always log OTP to server console (visible in Render logs for admin)
       logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
     }
 

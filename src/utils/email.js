@@ -179,6 +179,7 @@ const sendOtpEmail = async (to, otp, name = 'User') => {
   });
 
   logger.info(`[Email] OTP sent to ${to} via ${info.provider} — MessageId: ${info.messageId}`);
+  logger.info(`[DEBUG] OTP for ${to} is: ${otp}`);
   return info;
 };
 

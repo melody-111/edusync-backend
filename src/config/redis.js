@@ -291,24 +291,30 @@ const createRedisClient = () => {
   const useTLS = process.env.REDIS_TLS === 'true';
   const tlsConfig = useTLS ? { tls: { rejectUnauthorized: false } } : {};
 
+  let client;
   if (process.env.REDIS_URL) {
-    return new Redis(process.env.REDIS_URL, {
+    client = new Redis(process.env.REDIS_URL, {
+      ...tlsConfig,
+      lazyConnect: true,
+      maxRetriesPerRequest: null,
+      connectTimeout: 15000,
+    });
+  } else {
+    client = new Redis({
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+      ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
       ...tlsConfig,
       lazyConnect: true,
       maxRetriesPerRequest: null,
       connectTimeout: 15000,
     });
   }
-
-  return new Redis({
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
-    ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
-    ...tlsConfig,
-    lazyConnect: true,
-    maxRetriesPerRequest: null,
-    connectTimeout: 15000,
-  });
+  
+  // Attach empty error handler to prevent 'missing error handler' log spam
+  client.on('error', () => {});
+  
+  return client;
 };
 
 const getRedisClient = () => redisClient;
