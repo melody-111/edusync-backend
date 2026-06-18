@@ -340,3 +340,22 @@ module.exports = {
   saveNote,
   generatePdfFromNote,
 };
+
+// Fetch all broadcast files created by teachers
+const getSharedFiles = asyncHandler(async (req, res) => {
+  const { college_id } = req.user;
+
+  // Find all files that are broadcasted by teachers in the same college
+  const files = await File.find({
+    college_id,
+    ownerRole: 'teacher',
+    isBroadcast: true,
+    isDeleted: false,
+  })
+    .populate('folderId', 'name color subject folderType')
+    .sort({ createdAt: -1 });
+
+  return sendSuccess(res, 'Shared files fetched', { files });
+});
+
+module.exports.getSharedFiles = getSharedFiles;

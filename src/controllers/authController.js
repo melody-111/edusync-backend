@@ -106,7 +106,13 @@ const generateOtp = () => {
 const loginWithPassword = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  const user = await User.findOne({ email: email.toLowerCase() });
+  let normalizedEmail = String(email || '').trim().toLowerCase();
+  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(normalizedEmail.replace(/[\s-]/g, ''));
+  if (isPhone) {
+    normalizedEmail = normalizedEmail.replace(/[\s-]/g, '');
+  }
+
+  const user = await User.findOne({ email: normalizedEmail });
   if (!user) return sendError(res, 'Invalid email or password', 401);
   if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
@@ -912,10 +918,13 @@ const initTerminal = asyncHandler(async (req, res) => {
     const ip = getClientIp(req);
     const EXPIRES_IN = 120; // Increased to 2 minutes for better stability
 
+    const targetRole = req.query.role === 'teacher' ? 'teacher' : 'student';
+
     await TerminalSession.create({
       terminalId,
       qrToken,
       ipAddress: ip,
+      targetRole,
       expiresAt: new Date(Date.now() + EXPIRES_IN * 1000),
       lastRefreshedAt: new Date(),
     });
@@ -1024,6 +1033,10 @@ const syncTerminal = asyncHandler(async (req, res) => {
 
   const terminal = await TerminalSession.findOne({ terminalId, qrToken, status: 'pending' });
   if (!terminal) return sendError(res, 'Invalid or expired sync token', 400);
+
+  if (terminal.targetRole && terminal.targetRole !== user.role) {
+    return sendError(res, `Failed to connect: Please use the ${terminal.targetRole} app`, 403);
+  }
 
   // Generate tokens for the terminal
   const { accessToken, refreshToken } = generateTokenPair(user);

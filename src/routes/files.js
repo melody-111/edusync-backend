@@ -7,7 +7,8 @@ const {
   uploadFile, getFile, getUserNotes, deleteFile,
   saveStrokeBatch, getPageStrokes,
   createPage, getSessionPages,
-  saveNote, generatePdfFromNote
+  saveNote, generatePdfFromNote,
+  getSharedFiles
 } = require('../controllers/fileController');
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
@@ -19,6 +20,9 @@ router.use(authenticate);
 
 // GET /user/notes — mobile notes API
 router.get('/notes', getUserNotes);
+
+// GET /files/shared - fetch teacher broadcasted files
+router.get('/shared', getSharedFiles);
 
 // File CRUD
 router.post('/upload', uploadLimiter, upload.single('file'), uploadFile);

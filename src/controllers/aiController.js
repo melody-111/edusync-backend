@@ -78,6 +78,27 @@ const aiChat = asyncHandler(async (req, res) => {
       : `You are a helpful study assistant for a student. Answer questions clearly, encourage learning, and provide educational support. ${context ? `Context: ${context}` : ''}`,
   };
 
+  // Moderation check
+  try {
+    const modInput = messages && messages.length > 0 ? messages.map(m => typeof m.content === 'string' ? m.content : '').join(' ') : '';
+    if (modInput.trim()) {
+      const modResponse = await axios.post(`${AI_API_BASE_URL}/moderations`, {
+        input: modInput
+      }, {
+        headers: {
+          Authorization: `Bearer ${AI_API_KEY}`,
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (modResponse.data?.results?.[0]?.flagged) {
+        return sendError(res, 'Warning: 18+ or inappropriate content is strictly prohibited for educational use.', 400);
+      }
+    }
+  } catch(e) {
+    logger.warn('Moderation API check failed: ' + e.message);
+  }
+
   const payload = {
     model: AI_MODEL,
     messages: [systemMessage, ...messages],
@@ -96,7 +117,14 @@ const aiChat = asyncHandler(async (req, res) => {
     });
     aiResponse = response.data;
   } catch (err) {
-    logger.error(`AI API error: ${err.response?.data?.error?.message || err.message}`);
+    const errorMsg = err.response?.data?.error?.message || err.message || '';
+    logger.error(`AI API error: ${errorMsg}`);
+    
+    // Check for 18+ / safety violations natively caught by OpenAI
+    if (errorMsg.toLowerCase().includes('safety') || errorMsg.toLowerCase().includes('policy')) {
+        return sendError(res, 'Warning: 18+ or inappropriate content is strictly prohibited for educational use.', 400);
+    }
+
     return sendError(res, 'AI service unavailable. Please try again.', 503);
   }
 
@@ -170,6 +198,26 @@ const generateImage = asyncHandler(async (req, res) => {
     return sendError(res, 'AI service not configured', 503);
   }
 
+  // Moderation check
+  try {
+    if (prompt) {
+      const modResponse = await axios.post(`${AI_API_BASE_URL}/moderations`, {
+        input: prompt
+      }, {
+        headers: {
+          Authorization: `Bearer ${AI_API_KEY}`,
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (modResponse.data?.results?.[0]?.flagged) {
+        return sendError(res, 'Warning: 18+ or inappropriate content is strictly prohibited for educational use.', 400);
+      }
+    }
+  } catch(e) {
+    logger.warn('Moderation API check failed: ' + e.message);
+  }
+
   let imageUrl;
   try {
     const response = await axios.post(`${AI_API_BASE_URL}/images/generations`, {
@@ -187,10 +235,16 @@ const generateImage = asyncHandler(async (req, res) => {
     
     imageUrl = response.data?.data?.[0]?.url;
   } catch (err) {
-    logger.error(`AI Image API error: ${err.response?.data?.error?.message || err.message}`);
+    const errorMsg = err.response?.data?.error?.message || err.message || '';
+    logger.error(`AI Image API error: ${errorMsg}`);
     
+    // Check for 18+ / safety violations natively caught by OpenAI
+    if (errorMsg.toLowerCase().includes('safety') || errorMsg.toLowerCase().includes('policy') || errorMsg.toLowerCase().includes('rejected')) {
+        return sendError(res, 'Warning: 18+ or inappropriate content is strictly prohibited for educational use.', 400);
+    }
+
     // Fallback to dall-e-2 if dall-e-3 is not available
-    if (err.response?.data?.error?.message?.includes('model')) {
+    if (errorMsg.includes('model')) {
         try {
             const fallbackResponse = await axios.post(`${AI_API_BASE_URL}/images/generations`, {
                 prompt,

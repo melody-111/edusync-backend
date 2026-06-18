@@ -100,7 +100,7 @@ const userSchema = new mongoose.Schema(
 
 // ─── Instance Methods ─────────────────────────────────────────────────────────
 userSchema.methods.setPassword = async function (password) {
-  this.authProviders.local.passwordHash = await bcrypt.hash(password, 12);
+  this.authProviders.local.passwordHash = await bcrypt.hash(password, 10);
 };
 
 userSchema.methods.verifyPassword = async function (password) {

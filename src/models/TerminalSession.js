@@ -20,6 +20,12 @@ const terminalSessionSchema = new mongoose.Schema(
       enum: ['pending', 'synced', 'expired'],
       default: 'pending',
     },
+    targetRole: {
+      type: String,
+      enum: ['teacher', 'student'],
+      required: true,
+      default: 'student',
+    },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
