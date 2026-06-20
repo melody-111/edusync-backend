@@ -140,6 +140,11 @@ const initSocketServer = async (httpServer) => {
   // Prevents DB write on EVERY heartbeat ping (would be millions of writes/min at scale)
   const _heartbeatTimers = new Map();
 
+  // ─── Active Live Sessions Cache ──────────────────────────────────────────────
+  // Stores active class:started payloads keyed by room ID (e.g. edu:CS:2nd:3)
+  // This allows late-joining students to receive the notification immediately on connect
+  const _liveSessions = new Map(); // roomKey → { notificationPayload, expiresAt }
+
   _io.on('connection', (socket) => {
     const { user, userId, userRole } = socket;
     const queryRoomId = socket.handshake.query.roomId;
@@ -191,6 +196,42 @@ const initSocketServer = async (httpServer) => {
             message: `${user.name} is online.`
           });
         }
+      }
+
+      // ─── Late-Join: If student connects after teacher is already live ────────
+      if (userRole === 'student') {
+        const studentBranch = user.branch;
+        const studentYear = user.year;
+        const studentSemester = user.semester;
+        const studentInstitution = user.institutionName;
+        const studentClassroomId = user.classroomId;
+
+        _liveSessions.forEach((session, roomKey) => {
+          // Cleanup expired sessions (> 3 hours)
+          if (Date.now() > session.expiresAt) {
+            _liveSessions.delete(roomKey);
+            return;
+          }
+
+          const payload = session.notificationPayload;
+          let matches = false;
+
+          if (payload.classroomId && studentClassroomId) {
+            matches = payload.classroomId === studentClassroomId;
+          } else if (payload.branch && payload.year && payload.semester) {
+            const branchMatch = !payload.branch || payload.branch === studentBranch;
+            const yearMatch = !payload.year || payload.year === studentYear;
+            const semMatch = !payload.semester || String(payload.semester) === String(studentSemester);
+            const instMatch = !payload.institutionName || !studentInstitution ||
+              payload.institutionName.toLowerCase() === studentInstitution.toLowerCase();
+            matches = branchMatch && yearMatch && semMatch && instMatch;
+          }
+
+          if (matches) {
+            logger.info(`[SOCKET] Late-join: Sending existing class:started to student ${userId} for room ${roomKey}`);
+            socket.emit('class:started', payload);
+          }
+        });
       }
     }
 
@@ -599,11 +640,16 @@ const initSocketServer = async (httpServer) => {
       targetRooms.forEach(room => {
         console.log(`[SOCKET] Emitting class:started to target room: ${room}`);
         _io.to(room).emit('class:started', notificationPayload);
+        // Cache this live session so late-joining students can receive it
+        _liveSessions.set(room, {
+          notificationPayload,
+          expiresAt: Date.now() + 3 * 60 * 60 * 1000 // 3 hours TTL
+        });
       });
 
       // Global fallback removed to ensure strict student targeting based on matching criteria
       // Verification log
-      console.log(`[SOCKET] Broadcast complete for ${subject} to ${targetRooms.size} targeted rooms`);
+      console.log(`[SOCKET] Broadcast complete for ${subject} to ${targetRooms.size} targeted rooms. Live sessions cached: ${_liveSessions.size}`);
 
       // 3. 🆕 Mobile Push Notifications
       try {
