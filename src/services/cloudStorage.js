@@ -152,15 +152,41 @@ const deleteFromCloud = async (cloudPublicId, resourceType = 'raw') => {
   }
 };
 
-// ─── Utility ────────────────────────────────────────────────────────────────
+// ─── Thumbnail Upload ────────────────────────────────────────────────────────
 
 /**
- * Check if cloud storage is active and properly configured.
+ * Upload a base64 JPEG thumbnail (canvas snapshot) to Cloudinary.
+ * Used for mobile read-only preview of canvas notes.
+ *
+ * @param {string} base64Image - data:image/jpeg;base64,... string
+ * @param {string} userId      - Owner's user ID
+ * @param {string} noteId      - Note/File ID
+ * @returns {Promise<string|null>} The thumbnail URL or null on failure
  */
-const isCloudEnabled = () => isConfigured;
+const uploadThumbnail = async (base64Image, userId, noteId) => {
+  if (!isConfigured || !base64Image) return null;
+
+  try {
+    const uploadResult = await cloudinary.uploader.upload(base64Image, {
+      folder: `edusync/thumbnails/${userId}`,
+      public_id: `thumb_${noteId}`,
+      resource_type: 'image',
+      overwrite: true,
+      invalidate: true,
+      transformation: [{ width: 1200, crop: 'limit', quality: 80, format: 'jpg' }],
+    });
+
+    logger.debug(`☁️  Uploaded thumbnail for note ${noteId}: ${uploadResult.secure_url}`);
+    return uploadResult.secure_url;
+  } catch (err) {
+    logger.warn(`☁️  Thumbnail upload failed for note ${noteId}: ${err.message}`);
+    return null;
+  }
+};
 
 module.exports = {
   uploadCanvasData,
+  uploadThumbnail,
   downloadCanvasData,
   deleteFromCloud,
   isCloudEnabled,

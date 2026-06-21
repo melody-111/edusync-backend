@@ -8,7 +8,7 @@ const User = require('../models/User');
 const { compressStrokes, decompressStrokes } = require('../utils/compression');
 const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
-const { uploadCanvasData, deleteFromCloud, isCloudEnabled } = require('../services/cloudStorage');
+const { uploadCanvasData, uploadThumbnail, deleteFromCloud, isCloudEnabled } = require('../services/cloudStorage');
 
 // ─── Upload File ───────────────────────────────────────────────────────────────
 const uploadFile = asyncHandler(async (req, res) => {
@@ -217,7 +217,7 @@ const getSessionPages = asyncHandler(async (req, res) => {
 
 // ─── Save Note (Canvas Persistence) ─────────────────────────────────────────
 const saveNote = asyncHandler(async (req, res) => {
-  const { title, canvasData, fileType, folderId, id, isBroadcast } = req.body;
+  const { title, canvasData, thumbnailImage, fileType, folderId, id, isBroadcast } = req.body;
   const user = req.user;
 
   // ── UPDATE existing note ────────────────────────────────────────────────
@@ -254,6 +254,12 @@ const saveNote = asyncHandler(async (req, res) => {
         } else {
           updateData.canvasData = canvasData;
         }
+
+        // Upload thumbnail for mobile read-only preview
+        if (thumbnailImage && isCloudEnabled()) {
+          const thumbUrl = await uploadThumbnail(thumbnailImage, user._id.toString(), id);
+          if (thumbUrl) updateData.thumbnailUrl = thumbUrl;
+        }
       }
 
       const file = await File.findOneAndUpdate(
@@ -277,9 +283,8 @@ const saveNote = asyncHandler(async (req, res) => {
   };
 
   // Try cloud upload if enabled
+  const tempId = Date.now().toString(36);
   if (canvasData && isCloudEnabled()) {
-    // Use a temp ID for naming; will update after creation
-    const tempId = Date.now().toString(36);
     const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), tempId);
     if (cloudResult) {
       createData.cloudUrl = cloudResult.cloudUrl;
@@ -291,6 +296,12 @@ const saveNote = asyncHandler(async (req, res) => {
     }
   } else {
     createData.canvasData = canvasData;
+  }
+
+  // Upload thumbnail for mobile read-only preview
+  if (thumbnailImage && isCloudEnabled()) {
+    const thumbUrl = await uploadThumbnail(thumbnailImage, user._id.toString(), tempId);
+    if (thumbUrl) createData.thumbnailUrl = thumbUrl;
   }
 
   const file = await File.create(createData);

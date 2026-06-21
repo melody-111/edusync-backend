@@ -41,6 +41,9 @@ const fileSchema = new mongoose.Schema(
     cloudUrl: { type: String, default: null },
     cloudPublicId: { type: String, default: null },
 
+    // Canvas Thumbnail — JPEG snapshot for mobile read-only preview
+    thumbnailUrl: { type: String, default: null },
+
 
     // Folder organisation (subject-wise folders)
     folderId: {
