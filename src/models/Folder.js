@@ -4,29 +4,29 @@ const mongoose = require('mongoose');
 
 const folderSchema = new mongoose.Schema(
   {
-    name: { 
-      type: String, 
-      required: true, 
-      trim: true 
+    name: {
+      type: String,
+      required: true,
+      trim: true
     },
-    parentFolder: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'Folder', 
-      default: null 
+    parentFolder: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Folder',
+      default: null
     },
-    ownerId: { 
-      type: mongoose.Schema.Types.Mixed, 
-      ref: 'User', 
+    ownerId: {
+      type: mongoose.Schema.Types.Mixed,
+      ref: 'User',
       required: true,
       index: true
     },
-    ownerRole: { 
-      type: String, 
-      enum: ['student', 'teacher'], 
-      required: true 
+    ownerRole: {
+      type: String,
+      enum: ['student', 'teacher'],
+      required: true
     },
-    subject: { 
-      type: String, 
+    subject: {
+      type: String,
       trim: true,
       default: 'General'
     },
@@ -35,9 +35,9 @@ const folderSchema = new mongoose.Schema(
       enum: ['notes', 'assignments', 'experiments', 'other'],
       default: 'notes'
     },
-    color: { 
-      type: String, 
-      default: '#6c63ff' 
+    color: {
+      type: String,
+      default: '#6c63ff'
     },
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date, default: null },

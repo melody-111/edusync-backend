@@ -561,7 +561,7 @@ const endSession = asyncHandler(async (req, res) => {
       await File.findByIdAndUpdate(session.fileId, { canvasData, lastAutoSavedAt: new Date() });
     } else {
       // New Class: save to linked folder (or default)
-      await File.create({
+      const newFile = await File.create({
         ownerId: user._id,
         ownerRole: user.role,
         fileType: 'note',
@@ -570,6 +570,8 @@ const endSession = asyncHandler(async (req, res) => {
         canvasData,
         sessionId: session._id,
       });
+      session.fileId = newFile._id;
+      await session.save();
     }
   }
 
@@ -847,7 +849,7 @@ const saveSessionProgress = asyncHandler(async (req, res) => {
       await File.findByIdAndUpdate(session.fileId, { canvasData, lastAutoSavedAt: new Date() });
     } else {
       // New Class: save to linked folder (or default)
-      await File.create({
+      const newFile = await File.create({
         ownerId: user._id,
         ownerRole: user.role,
         fileType: 'note',
@@ -856,6 +858,7 @@ const saveSessionProgress = asyncHandler(async (req, res) => {
         canvasData,
         sessionId: session._id,
       });
+      session.fileId = newFile._id;
       await session.save();
     }
 

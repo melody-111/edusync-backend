@@ -217,34 +217,43 @@ const getSessionPages = asyncHandler(async (req, res) => {
 
 // ─── Save Note (Canvas Persistence) ─────────────────────────────────────────
 const saveNote = asyncHandler(async (req, res) => {
-  const { title, canvasData, fileType, folderId, id } = req.body;
+  const { title, canvasData, fileType, folderId, id, isBroadcast } = req.body;
   const user = req.user;
 
   // ── UPDATE existing note ────────────────────────────────────────────────
   if (id && id.match(/^[0-9a-fA-F]{24}$/)) {
     const existingFile = await File.findOne({ _id: id, ownerId: user._id });
-    if (existingFile) {
+      if (existingFile) {
       const updateData = { title, updatedAt: new Date() };
+      
+      if (isBroadcast !== undefined) {
+        updateData.isBroadcast = isBroadcast === true || isBroadcast === 'true';
+        if (req.body.targetClassroom !== undefined) updateData.targetClassroom = req.body.targetClassroom;
+        if (req.body.targetSemester !== undefined) updateData.targetSemester = req.body.targetSemester;
+        if (req.body.targetBranch !== undefined) updateData.targetBranch = req.body.targetBranch;
+      }
 
       // Try cloud upload if enabled
-      if (canvasData && isCloudEnabled()) {
-        // Delete old cloud file if exists
-        if (existingFile.cloudPublicId) {
-          const oldResourceType = existingFile.cloudUrl && existingFile.cloudUrl.includes('/image/') ? 'image' : 'raw';
-          deleteFromCloud(existingFile.cloudPublicId, oldResourceType).catch(() => {});
-        }
+      if (canvasData !== undefined) {
+        if (canvasData && isCloudEnabled()) {
+          // Delete old cloud file if exists
+          if (existingFile.cloudPublicId) {
+            const oldResourceType = existingFile.cloudUrl && existingFile.cloudUrl.includes('/image/') ? 'image' : 'raw';
+            deleteFromCloud(existingFile.cloudPublicId, oldResourceType).catch(() => {});
+          }
 
-        const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), id);
-        if (cloudResult) {
-          updateData.cloudUrl = cloudResult.cloudUrl;
-          updateData.cloudPublicId = cloudResult.cloudPublicId;
-          updateData.canvasData = null; // Don't store in MongoDB when cloud is used
+          const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), id);
+          if (cloudResult) {
+            updateData.cloudUrl = cloudResult.cloudUrl;
+            updateData.cloudPublicId = cloudResult.cloudPublicId;
+            updateData.canvasData = null; // Don't store in MongoDB when cloud is used
+          } else {
+            // Fallback: store in MongoDB
+            updateData.canvasData = canvasData;
+          }
         } else {
-          // Fallback: store in MongoDB
           updateData.canvasData = canvasData;
         }
-      } else {
-        updateData.canvasData = canvasData;
       }
 
       const file = await File.findOneAndUpdate(
@@ -264,6 +273,7 @@ const saveNote = asyncHandler(async (req, res) => {
     fileType: fileType || 'notes',
     title: title || 'Untitled Note',
     folderId: folderId || null,
+    isBroadcast: isBroadcast === true || isBroadcast === 'true',
   };
 
   // Try cloud upload if enabled
@@ -343,15 +353,34 @@ module.exports = {
 
 // Fetch all broadcast files created by teachers
 const getSharedFiles = asyncHandler(async (req, res) => {
-  const { college_id } = req.user;
+  const { college_id, institutionType, classroomId, semester, branch } = req.user;
 
-  // Find all files that are broadcasted by teachers in the same college
-  const files = await File.find({
+  const baseQuery = {
     college_id,
     ownerRole: 'teacher',
     isBroadcast: true,
     isDeleted: false,
-  })
+  };
+
+  const targetConditions = [
+    { targetClassroom: null, targetSemester: null, targetBranch: null } // Global
+  ];
+
+  if (institutionType === 'school') {
+    if (classroomId) targetConditions.push({ targetClassroom: classroomId });
+  } else if (institutionType === 'university') {
+    if (semester) targetConditions.push({ targetSemester: semester });
+    if (branch) targetConditions.push({ targetBranch: branch });
+    if (semester && branch) targetConditions.push({ targetSemester: semester, targetBranch: branch });
+  }
+
+  const query = {
+    ...baseQuery,
+    $or: targetConditions,
+  };
+
+  // Find all files that are broadcasted by teachers in the same college and match targets
+  const files = await File.find(query)
     .populate('folderId', 'name color subject folderType')
     .sort({ createdAt: -1 });
 

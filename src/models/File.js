@@ -11,9 +11,9 @@ const fileSchema = new mongoose.Schema(
       index: true,
     },
     college_id: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
       ref: 'College',
-      required: true,
+      default: null,
       index: true,
     },
     ownerId: {
@@ -52,6 +52,9 @@ const fileSchema = new mongoose.Schema(
 
     // For teacher broadcast files: everyone gets reference
     isBroadcast: { type: Boolean, default: false },
+    targetClassroom: { type: String, default: null },
+    targetSemester: { type: String, default: null },
+    targetBranch: { type: String, default: null },
 
     // Auto-save tracking
     isAutoSaved: { type: Boolean, default: false },

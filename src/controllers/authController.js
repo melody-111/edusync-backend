@@ -511,7 +511,7 @@ const signup = asyncHandler(async (req, res) => {
   const { 
     email, password, name, role, institutionType, 
     className, rollNumber, subject, idNumber, 
-    branch, course, semester, year, institutionName
+    branch, course, semester, year, institutionName, collegeCode
   } = req.body;
 
   logger.info(`[AUTH] Signup attempt for email: ${email}, role: ${role}`);
@@ -553,12 +553,19 @@ const signup = asyncHandler(async (req, res) => {
       }
       
       // Auto-create/assign College
-      if (user.institutionName) {
-        let collegeDoc = await College.findOne({ name: new RegExp(`^${user.institutionName}$`, 'i') });
+      const searchKey = collegeCode || institutionName || user.institutionName;
+      if (searchKey) {
+        let collegeDoc = await College.findOne({ 
+          $or: [
+            { collegeCode: new RegExp(`^${searchKey}$`, 'i') },
+            { name: new RegExp(`^${searchKey}$`, 'i') }
+          ]
+        });
         if (!collegeDoc) {
-          collegeDoc = await College.create({ name: user.institutionName });
+          collegeDoc = await College.create({ name: searchKey, collegeCode: searchKey.toUpperCase() });
         }
         user.college_id = collegeDoc._id;
+        user.institutionName = collegeDoc.name;
       }
       
       await user.save({ validateBeforeSave: false });
@@ -588,12 +595,19 @@ const signup = asyncHandler(async (req, res) => {
       }
       
       // Auto-create/assign College
-      if (userData.institutionName) {
-        let collegeDoc = await College.findOne({ name: new RegExp(`^${userData.institutionName}$`, 'i') });
+      const searchKey = collegeCode || institutionName || userData.institutionName;
+      if (searchKey) {
+        let collegeDoc = await College.findOne({ 
+          $or: [
+            { collegeCode: new RegExp(`^${searchKey}$`, 'i') },
+            { name: new RegExp(`^${searchKey}$`, 'i') }
+          ]
+        });
         if (!collegeDoc) {
-          collegeDoc = await College.create({ name: userData.institutionName });
+          collegeDoc = await College.create({ name: searchKey, collegeCode: searchKey.toUpperCase() });
         }
         userData.college_id = collegeDoc._id;
+        userData.institutionName = collegeDoc.name;
       }
 
       user = await User.create(userData);

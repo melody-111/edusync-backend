@@ -5,18 +5,18 @@ const mongoose = require('mongoose');
 const pageSchema = new mongoose.Schema(
   {
     sessionId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
       ref: 'Session',
       required: true,
       index: true,
     },
     fileId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
       ref: 'File',
       default: null,
     },
     ownerId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
       ref: 'User',
       required: true,
     },

@@ -39,19 +39,37 @@ const createFolder = asyncHandler(async (req, res) => {
  * Lists all folders for the authenticated user (optionally filtered by subject or parentFolder).
  */
 const getFolders = asyncHandler(async (req, res) => {
-  const { subject, parentFolder } = req.query;
+  const { subject } = req.query;
   const user = req.user;
 
   const query = {
     ownerId: user._id,
     isDeleted: false,
-    parentFolder: parentFolder || null,
   };
 
   if (subject) query.subject = subject;
 
-  const folders = await Folder.find(query).sort({ name: 1 }).lean();
-  return sendSuccess(res, { folders, count: folders.length });
+  // Fetch ALL folders for this user
+  const allFolders = await Folder.find(query).sort({ name: 1 }).lean();
+  
+  // Fetch ALL files for this user
+  const allFiles = await File.find({ ownerId: user._id, isDeleted: false }).lean();
+  
+  // Helper to build tree
+  const buildTree = (parentId) => {
+    return allFolders
+      .filter(f => String(f.parentFolder || null) === String(parentId || null))
+      .map(f => ({
+        ...f,
+        files: allFiles.filter(file => String(file.folderId) === String(f._id)),
+        subfolders: buildTree(f._id)
+      }));
+  };
+
+  // Only return root folders (those with parentFolder = null)
+  const rootFolders = buildTree(null);
+
+  return sendSuccess(res, { folders: rootFolders, count: rootFolders.length });
 });
 
 /**

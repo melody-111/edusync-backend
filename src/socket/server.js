@@ -168,7 +168,8 @@ const initSocketServer = async (httpServer) => {
     // ─── Classroom Room Joining (Isolation) ────────────────────────────────────
     if (userRole === 'student' || userRole === 'teacher') {
       if (user.classroomId) {
-        const room = `classroom:${user.classroomId}`;
+        const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
+        const room = `classroom:${tenantPrefix}${user.classroomId}`;
         socket.join(room);
         logger.debug(`${userRole} ${userId} joined classroom: ${room}`);
 
@@ -184,7 +185,8 @@ const initSocketServer = async (httpServer) => {
 
       // University Style Targeting (Branch / Year / Sem)
       if (user.branch || user.year || user.semester) {
-        const compositeGroup = `edu:${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
+        const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
+        const compositeGroup = `edu:${tenantPrefix}${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
         socket.join(compositeGroup);
         logger.debug(`${userRole} ${userId} joined university group: ${compositeGroup}`);
 
@@ -625,15 +627,17 @@ const initSocketServer = async (httpServer) => {
       const targetRooms = new Set();
       if (payload.roomId) targetRooms.add(payload.roomId);
       
+      const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
+
       if (payload.classroomId) {
-        targetRooms.add(`classroom:${payload.classroomId}`);
+        targetRooms.add(`classroom:${tenantPrefix}${payload.classroomId}`);
       } else if (payload.branch && payload.year && payload.semester) {
-        targetRooms.add(`edu:${payload.branch}:${payload.year}:${payload.semester}`);
+        targetRooms.add(`edu:${tenantPrefix}${payload.branch}:${payload.year}:${payload.semester}`);
       } else {
         // Fallback to teacher's base profile if payload doesn't specify targeting
-        if (user.classroomId) targetRooms.add(`classroom:${user.classroomId}`);
+        if (user.classroomId) targetRooms.add(`classroom:${tenantPrefix}${user.classroomId}`);
         if (user.branch && user.year && user.semester) {
-          targetRooms.add(`edu:${user.branch}:${user.year}:${user.semester}`);
+          targetRooms.add(`edu:${tenantPrefix}${user.branch}:${user.year}:${user.semester}`);
         }
       }
 
@@ -658,6 +662,10 @@ const initSocketServer = async (httpServer) => {
 
         // Find students in this cohort/classroom based on strict matching
         const query = { role: 'student' };
+        if (user.college_id) {
+          query.college_id = user.college_id;
+        }
+
         if (payload.classroomId) {
           query.classroomId = payload.classroomId;
         } else if (payload.branch) {
