@@ -144,8 +144,10 @@ const createApp = () => {
       }
     }
 
-    // Consider healthy if MongoDB and Redis are connected (PostgreSQL is optional)
-    const status = (dbStatus === 'connected' && redisStatus === 'connected') ? 'healthy' : 'degraded';
+    // Server is healthy as long as MongoDB is connected.
+    // Redis is optional — if not configured (e.g. no Redis on Render free plan),
+    // we still return 200 so health checks pass and the server stays up.
+    const status = dbStatus === 'connected' ? 'healthy' : 'degraded';
 
     res.status(status === 'healthy' ? 200 : 503).json({
       status,
