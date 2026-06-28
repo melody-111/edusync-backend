@@ -15,6 +15,7 @@ const fileSchema = new mongoose.Schema(
       ref: 'College',
       default: null,
       index: true,
+      required: false,
     },
     ownerId: {
       type: mongoose.Schema.Types.Mixed,

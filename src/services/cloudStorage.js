@@ -184,6 +184,8 @@ const uploadThumbnail = async (base64Image, userId, noteId) => {
   }
 };
 
+const isCloudEnabled = () => isConfigured;
+
 module.exports = {
   uploadCanvasData,
   uploadThumbnail,
