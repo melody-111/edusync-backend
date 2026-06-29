@@ -305,7 +305,8 @@ const saveNote = asyncHandler(async (req, res) => {
     if (thumbUrl) createData.thumbnailUrl = thumbUrl;
   }
 
-  const file = await File.create(createData);
+  const fileDoc = new File(createData);
+  const file = await fileDoc.save({ validateBeforeSave: false });
 
   return sendSuccess(res, { file }, 'Note saved', 201);
 });
