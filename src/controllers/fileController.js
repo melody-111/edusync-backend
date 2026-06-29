@@ -273,7 +273,6 @@ const saveNote = asyncHandler(async (req, res) => {
 
   // ── CREATE new note ─────────────────────────────────────────────────────
   const createData = {
-    college_id: user.college_id,
     ownerId: user._id,
     ownerRole: user.role,
     fileType: fileType || 'notes',
@@ -281,6 +280,8 @@ const saveNote = asyncHandler(async (req, res) => {
     folderId: folderId || null,
     isBroadcast: isBroadcast === true || isBroadcast === 'true',
   };
+  // Only set college_id if user has one (independent teachers may not have it)
+  if (user.college_id) createData.college_id = user.college_id;
 
   // Try cloud upload if enabled
   const tempId = Date.now().toString(36);
