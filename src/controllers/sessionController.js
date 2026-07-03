@@ -50,6 +50,7 @@ const startSession = asyncHandler(async (req, res) => {
     roomId,
     teacherId: teacher._id,
     ownerId: teacher._id,
+    college_id: teacher.college_id || undefined,
     sessionType: 'class',
     title: title || (fileId ? 'Editing Session' : 'Untitled Session'),
     description: description || '',
