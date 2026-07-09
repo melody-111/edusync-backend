@@ -350,20 +350,6 @@ const generatePdfFromNote = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = {
-  uploadFile,
-  getFile,
-  getUserNotes,
-  deleteFile,
-  deleteNote: deleteFile,
-  saveStrokeBatch,
-  getPageStrokes,
-  createPage,
-  getSessionPages,
-  saveNote,
-  generatePdfFromNote,
-};
-
 // Fetch all broadcast files created by teachers
 const getSharedFiles = asyncHandler(async (req, res) => {
   const { college_id, institutionType, classroomId, semester, branch } = req.user;
@@ -399,6 +385,21 @@ const getSharedFiles = asyncHandler(async (req, res) => {
 
   return sendSuccess(res, 'Shared files fetched', { files });
 });
+
+module.exports = {
+  uploadFile,
+  getFile,
+  getUserNotes,
+  deleteFile,
+  deleteNote: deleteFile,
+  saveStrokeBatch,
+  getPageStrokes,
+  createPage,
+  getSessionPages,
+  saveNote,
+  generatePdfFromNote,
+  getSharedFiles,
+};
 
 module.exports.getSharedFiles = getSharedFiles;
 // force redeploy Mon Jun 29 10:09:06 IST 2026

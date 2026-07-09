@@ -69,6 +69,18 @@ const getFolders = asyncHandler(async (req, res) => {
   // Only return root folders (those with parentFolder = null)
   const rootFolders = buildTree(null);
 
+  // Group all files that do not belong to any specific folder into a "General" folder
+  const unassignedFiles = allFiles.filter(file => !file.folderId || String(file.folderId) === 'null');
+  if (unassignedFiles.length > 0) {
+    rootFolders.push({
+      _id: 'general',
+      name: 'General',
+      color: '#94a3b8',
+      files: unassignedFiles,
+      subfolders: []
+    });
+  }
+
   return sendSuccess(res, { folders: rootFolders, count: rootFolders.length });
 });
 
