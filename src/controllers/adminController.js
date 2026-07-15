@@ -44,6 +44,9 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
     if (mongoose.isValidObjectId(college_id)) filter.college_id = college_id;
     else filter.institutionName = new RegExp('^' + college_id + '$', 'i'); // fallback to name matching
   }
+  
+  // Ensure unverified users do not appear in the admin dashboard until they verify their OTP
+  filter.isVerified = true;
 
   const { docs, pagination } = await paginate(User, filter, {
     page: parseInt(page, 10),
@@ -402,14 +405,14 @@ exports.getInstitutionHierarchy = asyncHandler(async (req, res) => {
           $filter: {
             input: '$users',
             as: 'user',
-            cond: { $eq: ['$$user.role', 'teacher'] }
+            cond: { $and: [ { $eq: ['$$user.role', 'teacher'] }, { $eq: ['$$user.isVerified', true] } ] }
           }
         },
         students: {
           $filter: {
             input: '$users',
             as: 'user',
-            cond: { $eq: ['$$user.role', 'student'] }
+            cond: { $and: [ { $eq: ['$$user.role', 'student'] }, { $eq: ['$$user.isVerified', true] } ] }
           }
         }
       }
@@ -443,7 +446,7 @@ exports.getInstitutionHierarchy = asyncHandler(async (req, res) => {
 
   // Handle users without a college_id (Unassigned)
   const unassignedUsers = await User.aggregate([
-    { $match: { college_id: null, role: { $ne: 'super_admin' } } },
+    { $match: { college_id: null, role: { $ne: 'super_admin' }, isVerified: true } },
     {
       $project: {
         _id: 1,
