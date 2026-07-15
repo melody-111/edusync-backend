@@ -50,6 +50,9 @@ const userSchema = new mongoose.Schema(
 
     // Status
     isActive: { type: Boolean, default: true },
+    isBlocked: { type: Boolean, default: false },
+    blockReason: { type: String, default: null },
+    blockedUntil: { type: Date, default: null },
     isVerified: { type: Boolean, default: false },
     lastLoginAt: { type: Date, default: null },
     lastLoginIp: { type: String, default: null },

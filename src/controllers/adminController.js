@@ -377,3 +377,171 @@ exports.getSystemLogs = asyncHandler(async (req, res) => {
   return sendSuccess(res, { logs, pagination });
 });
 
+// ─── Super Admin: Institution Hierarchy ──────────────────────────────────────
+/**
+ * GET /admin/hierarchy
+ * Returns data grouped by College -> Teachers and Students
+ */
+exports.getInstitutionHierarchy = asyncHandler(async (req, res) => {
+  const hierarchy = await College.aggregate([
+    {
+      $lookup: {
+        from: 'users',
+        localField: '_id',
+        foreignField: 'college_id',
+        as: 'users'
+      }
+    },
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        collegeCode: 1,
+        status: 1,
+        teachers: {
+          $filter: {
+            input: '$users',
+            as: 'user',
+            cond: { $eq: ['$$user.role', 'teacher'] }
+          }
+        },
+        students: {
+          $filter: {
+            input: '$users',
+            as: 'user',
+            cond: { $eq: ['$$user.role', 'student'] }
+          }
+        }
+      }
+    },
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        collegeCode: 1,
+        status: 1,
+        teachers: {
+          $map: {
+            input: '$teachers',
+            as: 't',
+            in: { _id: '$$t._id', name: '$$t.name', email: '$$t.email', isBlocked: '$$t.isBlocked' }
+          }
+        },
+        students: {
+          $map: {
+            input: '$students',
+            as: 's',
+            in: { _id: '$$s._id', name: '$$s.name', email: '$$s.email', isBlocked: '$$s.isBlocked' }
+          }
+        }
+      }
+    },
+    {
+      $sort: { name: 1 }
+    }
+  ]);
+
+  // Handle users without a college_id (Unassigned)
+  const unassignedUsers = await User.aggregate([
+    { $match: { college_id: null, role: { $ne: 'super_admin' } } },
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        email: 1,
+        role: 1,
+        isBlocked: 1
+      }
+    }
+  ]);
+
+  if (unassignedUsers.length > 0) {
+    const teachers = unassignedUsers.filter(u => u.role === 'teacher');
+    const students = unassignedUsers.filter(u => u.role === 'student');
+    hierarchy.push({
+      _id: 'unassigned',
+      name: 'Unassigned Users',
+      teachers,
+      students
+    });
+  }
+
+  return sendSuccess(res, { hierarchy });
+});
+
+// ─── Super Admin: User Management ───────────────────────────────────────────
+/**
+ * POST /admin/users/:id/block
+ * Body: { reason: String, blockedUntil: Date }
+ */
+exports.blockUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason, blockedUntil } = req.body;
+
+  const user = await User.findByIdAndUpdate(
+    id,
+    { isBlocked: true, blockReason: reason || 'Violation of terms', blockedUntil: blockedUntil || null },
+    { new: true }
+  );
+
+  if (!user) return sendError(res, 'User not found', 404);
+
+  // Force expire tokens
+  await Device.updateMany({ userId: id }, { status: 'offline', activeSessionId: null });
+
+  logActivity({
+    userId: req.user._id,
+    actorRole: 'super_admin',
+    action: 'admin.user.block',
+    category: 'system',
+    details: { targetUserId: id, reason },
+  });
+
+  return sendSuccess(res, { user: user.toSafeObject() }, 'User has been blocked');
+});
+
+/**
+ * POST /admin/users/:id/unblock
+ */
+exports.unblockUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findByIdAndUpdate(
+    id,
+    { isBlocked: false, blockReason: null, blockedUntil: null },
+    { new: true }
+  );
+
+  if (!user) return sendError(res, 'User not found', 404);
+
+  logActivity({
+    userId: req.user._id,
+    actorRole: 'super_admin',
+    action: 'admin.user.unblock',
+    category: 'system',
+    details: { targetUserId: id },
+  });
+
+  return sendSuccess(res, { user: user.toSafeObject() }, 'User has been unblocked');
+});
+
+/**
+ * GET /admin/users/:id/details
+ * Fetch complete user details including their activity history
+ */
+exports.getUserDetails = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const user = await User.findById(id).populate('college_id', 'name collegeCode');
+  if (!user) return sendError(res, 'User not found', 404);
+
+  const activities = await ActivityLog.find({ userId: id })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  return sendSuccess(res, {
+    user: user.toSafeObject(),
+    activities
+  });
+});
+

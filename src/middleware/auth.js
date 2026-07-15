@@ -60,6 +60,17 @@ const authenticate = async (req, res, next) => {
 
     if (!user.isActive) return sendError(res, 'Account is disabled', 403);
 
+    // Check if user is blocked
+    if (user.isBlocked) {
+      const now = new Date();
+      if (user.blockedUntil && new Date(user.blockedUntil) > now) {
+        return sendError(res, `Account temporarily suspended until ${new Date(user.blockedUntil).toLocaleString()}. Reason: ${user.blockReason || 'Terms violation'}`, 403);
+      } else if (!user.blockedUntil) {
+        return sendError(res, `Account permanently blocked. Reason: ${user.blockReason || 'Terms violation'}`, 403);
+      }
+      // If blockedUntil is in the past, block has expired, allow access.
+    }
+
     // Check college status
     if (user.college_id || user.institutionName) {
       const colQuery = user.college_id ? { _id: user.college_id } : { name: user.institutionName };

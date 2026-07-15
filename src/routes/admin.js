@@ -16,6 +16,10 @@ const {
   getSystemStats,
   getUserActivities,
   getSystemLogs,
+  getInstitutionHierarchy,
+  blockUser,
+  unblockUser,
+  getUserDetails,
 } = require('../controllers/adminController');
 const { authenticate } = require('../middleware/auth');
 const { apiLimiter } = require('../middleware/rateLimiter');
@@ -69,5 +73,17 @@ router.get('/colleges', getColleges);
 
 // PUT  /admin/colleges/:id/block   — block/unblock a college
 router.put('/colleges/:id/block', toggleCollegeBlock);
+
+// GET  /admin/hierarchy            — data grouped by College -> Teachers/Students
+router.get('/hierarchy', getInstitutionHierarchy);
+
+// POST /admin/users/:id/block      — block user
+router.post('/users/:id/block', blockUser);
+
+// POST /admin/users/:id/unblock    — unblock user
+router.post('/users/:id/unblock', unblockUser);
+
+// GET  /admin/users/:id/details    — get comprehensive user details + history
+router.get('/users/:id/details', getUserDetails);
 
 module.exports = router;
