@@ -93,8 +93,8 @@ const createApp = () => {
   app.use(generalLimiter);
 
   // ─── Body Parsing ────────────────────────────────────────────────────────────
-  app.use(express.json({ limit: '5mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // ─── Data Sanitization & Input Validation ────────────────────────────────────
   // Protect against NoSQL Injection
