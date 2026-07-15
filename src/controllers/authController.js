@@ -636,17 +636,11 @@ const signup = asyncHandler(async (req, res) => {
       if (isPhone) {
         let formattedPhone = email.replace(/[\s-]/g, '');
         if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-        sendWhatsAppOtp(formattedPhone, otp).catch(err => {
-          logger.error(`[AUTH] Signup WhatsApp OTP delivery failed for ${formattedPhone}: ${err.message}`);
-          logger.warn(`[AUTH] FALLBACK OTP for signup ${formattedPhone} → ${otp}`);
-        });
+        await sendWhatsAppOtp(formattedPhone, otp);
         emailSent = true;
         logger.info(`[AUTH] Signup WhatsApp OTP processing started for ${formattedPhone}`);
       } else {
-        sendOtpEmail(email, otp, user.name || name).catch(err => {
-          logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${err.message}`);
-          logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
-        });
+        await sendOtpEmail(email, otp, user.name || name);
         emailSent = true;
         logger.info(`[AUTH] Signup OTP email processing started for ${email}`);
       }
