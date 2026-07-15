@@ -46,21 +46,21 @@ const sendOtpSms = async (phone, otp) => {
  * @param {string} otp - The 6-digit OTP code
  */
 const sendWhatsAppOtp = async (phone, otp) => {
-  if (!twilioClient || !process.env.TWILIO_PHONE_NUMBER) {
+  if (!twilioClient) {
     logger.warn(`Twilio not configured. Would have sent WhatsApp OTP ${otp} to ${phone}`);
     return;
   }
 
+  // Use sandbox sender number (TWILIO_WHATSAPP_FROM) or fallback to Twilio sandbox default
+  const fromNumber = `whatsapp:${process.env.TWILIO_WHATSAPP_FROM || '+14155238886'}`;
+  const toNumber = `whatsapp:${phone}`;
+
   try {
-    const fromNumber = `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`;
-    const toNumber = `whatsapp:${phone}`;
-    
     const message = await twilioClient.messages.create({
       body: `*EduSync*\nYour verification code is: *${otp}*.\n\nValid for 5 minutes. Do not share this code.`,
       from: fromNumber,
       to: toNumber,
     });
-    
     logger.info(`WhatsApp OTP sent to ${phone} (SID: ${message.sid})`);
     return message;
   } catch (error) {
