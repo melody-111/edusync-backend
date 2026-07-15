@@ -58,78 +58,24 @@ const resetTransporter = () => {
 const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => {
   const from = fromOverride || process.env.EMAIL_FROM || '"EduSync 🎓" <noreply@edusync.app>';
   
-  // Helper to extract clean email for API calls
-  let fromEmail = from;
-  let fromName = '';
-  const match = from.match(/"?([^"]+)"?\s*<([^>]+)>/);
-  if (match) {
-    fromName = match[1];
-    fromEmail = match[2];
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    throw new Error('Email Delivery Failed: SMTP_USER or SMTP_PASS is missing from environment variables.');
   }
 
-  // 1. Try SendGrid HTTP API First
-  if (process.env.SENDGRID_API_KEY) {
-    logger.info(`[Email] Sending via SendGrid API to ${to}`);
-    try {
-      const res = await axios.post('https://api.sendgrid.com/v3/mail/send', {
-        personalizations: [{ to: [{ email: to }] }],
-        from: { email: fromEmail, name: fromName },
-        subject,
-        content: [
-          ...(text ? [{ type: 'text/plain', value: text }] : []),
-          { type: 'text/html', value: html }
-        ]
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000 // 10 second timeout
-      });
-      return { messageId: res.headers['x-message-id'] || 'sendgrid-success', provider: 'sendgrid' };
-    } catch (err) {
-      const sgErr = err.response?.data?.errors?.[0]?.message || err.message;
-      logger.error(`[Email] SendGrid API failed: ${sgErr}. Falling back to SMTP...`);
-    }
+  logger.info(`[Email] Sending via SMTP to ${to}`);
+  try {
+    const transporter = getTransporter();
+    // Using a 15-second timeout for the SMTP connection
+    const sendPromise = transporter.sendMail({ from, to, subject, html, text });
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out')), 15000));
+    
+    const info = await Promise.race([sendPromise, timeoutPromise]);
+    logger.info(`[Email] SMTP Email sent successfully! Message ID: ${info.messageId}`);
+    return { messageId: info.messageId, provider: 'smtp' };
+  } catch (err) {
+    logger.error(`[Email] SMTP delivery failed: ${err.message}`);
+    throw new Error(`Email Delivery Failed: SMTP error: ${err.message}`);
   }
-
-  // 2. Try SMTP (Nodemailer) as First Fallback
-  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-    logger.info(`[Email] Sending via SMTP (Fallback) to ${to}`);
-    try {
-      // Set a strict 5-second timeout so it doesn't hang forever on Render's firewall
-      const transporter = getTransporter();
-      
-      const sendPromise = transporter.sendMail({ from, to, subject, html, text });
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out')), 5000));
-      
-      const info = await Promise.race([sendPromise, timeoutPromise]);
-      return { messageId: info.messageId, provider: 'smtp' };
-    } catch (err) {
-      logger.warn(`[Email] SMTP fallback failed: ${err.message}. Falling back to Resend...`);
-    }
-  }
-
-  // 3. Fallback to Resend HTTP API
-  if (process.env.RESEND_API_KEY) {
-    logger.info(`[Email] Sending via Resend API (Fallback) to ${to}`);
-    try {
-      const res = await axios.post('https://api.resend.com/emails', {
-        from, to, subject, html, text
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      });
-      return { messageId: res.data.id, provider: 'resend' };
-    } catch (err) {
-      logger.warn(`[Email] Resend API failed: ${err.response?.data?.message || err.message}.`);
-    }
-  }
-
-  throw new Error('Email Delivery Failed: All providers (SendGrid, SMTP, Resend) exhausted.');
 };
 
 /**

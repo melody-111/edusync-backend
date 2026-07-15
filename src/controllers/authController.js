@@ -580,7 +580,6 @@ const signup = asyncHandler(async (req, res) => {
       collegeCode,
     };
 
-    /* --- TEMP BYPASS OTP: Commented out for testing ---
     // Generate OTP — stored in Redis (if available) or in-memory fallback
     const otp = generateOtp();
     const otpKey = `otp:${email.toLowerCase()}`;
@@ -614,56 +613,6 @@ const signup = asyncHandler(async (req, res) => {
       : 'Account created! Email delivery failed — please check spam or contact support. OTP has been logged.';
 
     return sendSuccess(res, { email }, message);
-    --------------------------------------------------- */
-
-    // --- DIRECT MONGODB CREATION FOR TESTING ---
-    const userData = { ...rawPayload, isVerified: true };
-    
-    // Auto-create/assign College if provided
-    const searchKeyRaw = userData.collegeCode || userData.institutionName;
-    const searchKey = searchKeyRaw ? searchKeyRaw.trim() : null;
-    if (searchKey) {
-      const safeSearchKey = searchKey.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
-      let collegeDoc = await College.findOne({ 
-        $or: [
-          { collegeCode: searchKey.toUpperCase() },
-          { name: new RegExp(`^${safeSearchKey}$`, 'i') }
-        ]
-      });
-      if (!collegeDoc) {
-        collegeDoc = await College.create({ name: searchKey, collegeCode: searchKey.toUpperCase() });
-      }
-      userData.college_id = collegeDoc._id;
-      userData.institutionName = collegeDoc.name;
-    }
-
-    if (userData.role === 'teacher') {
-      userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
-      userData.teacherCode = userData.deskId;
-    }
-
-    // Create user in MongoDB
-    user = await User.create(userData);
-
-    if (userData.password) {
-      await user.setPassword(userData.password);
-      await user.save({ validateBeforeSave: false });
-    }
-    
-    user.lastLoginAt = new Date();
-    user.lastLoginIp = getClientIp(req);
-    await user.save();
-
-    const { accessToken, refreshToken } = generateTokenPair(user);
-    user.refreshToken = crypto.createHash('sha256').update(refreshToken).digest('hex');
-    await user.save({ validateBeforeSave: false });
-
-    return sendSuccess(res, {
-      accessToken,
-      refreshToken,
-      user: user.toSafeObject(),
-    }, 'Signup successful (OTP Bypassed)');
-    // --- END DIRECT MONGODB CREATION ---
   } catch (err) {
     logger.error(`[AUTH] Signup CRITICAL error: ${err.message}`);
     return sendError(res, `Signup failed: ${err.message}`, 500);
