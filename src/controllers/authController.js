@@ -188,6 +188,10 @@ const login = asyncHandler(async (req, res) => {
 
   let user = await User.findOne({ email: email.toLowerCase() });
 
+  const otpExpiry = 5 * 60; // 5 minutes
+  const otp = generateOtp();
+  const otpKey = `otp:${email.toLowerCase()}`;
+
   if (!user) {
     // ─── SaaS Tenant Validation (New Users Only) ───
     if (!collegeCode) {
@@ -201,39 +205,18 @@ const login = asyncHandler(async (req, res) => {
       return sendError(res, 'Institution account is currently inactive.', 403);
     }
 
-    const userData = {
+    const rawPayload = {
       email: email.toLowerCase(),
       name: name || email.split('@')[0],
       role: role || 'student',
-      college_id: college._id, // Lock user to the tenant
-      isVerified: false,
-      authProviders: {},
+      collegeCode: collegeCode.toUpperCase(),
+      password,
+      rollNumber, course, branch, semester, year, section, institutionType, subjectId, subjectName, gmail
     };
 
-    // Add academic profile fields if provided
-    if (rollNumber) userData.rollNumber = rollNumber;
-    if (course) userData.course = course;
-    if (branch) userData.branch = branch;
-    if (semester) userData.semester = semester;
-    if (year) userData.year = year;
-    if (section) userData.section = section;
-    if (institutionType) userData.institutionType = institutionType;
-    if (subjectId) userData.subjectId = subjectId;
-    if (subjectName) userData.subjectName = subjectName;
-    if (gmail) userData.gmail = gmail;
-
-    if (userData.role === 'teacher') {
-      // Generate a permanent special ID for the teacher (Desk ID)
-      userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
-    }
-
-    user = await User.create(userData);
-
-    // Set password if provided
-    if (password) {
-      await user.setPassword(password);
-      await user.save({ validateBeforeSave: false });
-    }
+    // Store OTP AND the raw signup payload for delayed DB insertion
+    await cache.setJSON(otpKey, { otp, signupPayload: rawPayload }, otpExpiry);
+    logger.info(`[AUTH] Login (New User) OTP generated for ${email} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
   } else {
     // Update existing user with new profile data if provided
     if (name) user.name = name;
@@ -248,29 +231,25 @@ const login = asyncHandler(async (req, res) => {
     if (subjectName) user.subjectName = subjectName;
     if (gmail) user.gmail = gmail;
     await user.save({ validateBeforeSave: false });
+
+    // Enforce role check for existing users
+    if (role && user.role !== role) {
+      return sendError(res, `Unauthorized: You cannot access the ${role} app with a ${user.role} account.`, 403);
+    }
+
+    // Store OTP for existing user
+    await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, otpExpiry);
+    logger.info(`[AUTH] Login (Existing User) OTP generated for ${email} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
   }
-
-  // Enforce role check for existing users
-  if (role && user.role !== role) {
-    return sendError(res, `Unauthorized: You cannot access the ${role} app with a ${user.role} account.`, 403);
-  }
-
-  const otp = generateOtp();
-  const otpKey = `otp:${email.toLowerCase()}`;
-  const otpExpiry = 5 * 60; // 5 minutes
-
-  // Store OTP — uses Redis if available, in-memory fallback if Redis is down
-  await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, otpExpiry);
-  logger.info(`[AUTH] OTP generated for ${email} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
 
   let emailSent = false;
   let smtpError = null;
 
   try {
     if (isEmail) {
-      await sendOtpEmail(user.email, otp, user.name);
+      await sendOtpEmail(email, otp, (user && user.name) || name || 'User');
       emailSent = true;
-      logger.info(`[AUTH] OTP email delivered to ${user.email}`);
+      logger.info(`[AUTH] OTP email delivered to ${email}`);
     } else if (isPhone) {
       // Format phone number to include +91 if no country code provided
       let formattedPhone = email.replace(/[\s-]/g, '');
@@ -287,20 +266,22 @@ const login = asyncHandler(async (req, res) => {
     logger.warn(`[AUTH] FALLBACK OTP for ${email} → ${otp} (check Render logs)`);
   }
 
-  logActivity({ userId: user._id, actorRole: user.role, action: 'auth.otp.sent', category: 'auth', ip: getClientIp(req) });
+  if (user) {
+    logActivity({ userId: user._id, actorRole: user.role, action: 'auth.otp.sent', category: 'auth', ip: getClientIp(req) });
+  }
 
   // Always return success — OTP is stored in cache regardless of email delivery
   // If SMTP failed, tell user to check spam or contact admin
   if (!emailSent && smtpError) {
     return sendSuccess(
       res,
-      { email: user.email, expiresInSeconds: otpExpiry },
+      { email: email.toLowerCase(), expiresInSeconds: otpExpiry },
       `OTP generated! Email delivery failed (SMTP issue). Please check your spam folder or contact your admin.`
     );
   }
 
   const message = isEmail ? 'OTP sent to your email. Valid for 5 minutes.' : 'OTP sent.';
-  return sendSuccess(res, { email: user.email, expiresInSeconds: otpExpiry }, message);
+  return sendSuccess(res, { email: email.toLowerCase(), expiresInSeconds: otpExpiry }, message);
 });
 
 /**
@@ -321,8 +302,53 @@ const verifyOtp = asyncHandler(async (req, res) => {
   // Consume OTP immediately (prevent replay)
   await cache.del(otpKey);
 
-  const user = await User.findById(stored.userId);
-  if (!user) return sendError(res, 'User not found', 404);
+  let user;
+
+  // Case 1: Signup Flow (Delayed DB Insertion)
+  if (stored.signupPayload) {
+    const userData = stored.signupPayload;
+    
+    // Auto-create/assign College if provided
+    const searchKeyRaw = userData.collegeCode || userData.institutionName;
+    const searchKey = searchKeyRaw ? searchKeyRaw.trim() : null;
+    if (searchKey) {
+      const safeSearchKey = searchKey.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
+      let collegeDoc = await College.findOne({ 
+        $or: [
+          { collegeCode: searchKey.toUpperCase() },
+          { name: new RegExp(`^${safeSearchKey}$`, 'i') }
+        ]
+      });
+      if (!collegeDoc) {
+        collegeDoc = await College.create({ name: searchKey, collegeCode: searchKey.toUpperCase() });
+      }
+      userData.college_id = collegeDoc._id;
+      userData.institutionName = collegeDoc.name;
+    }
+
+    if (userData.role === 'teacher') {
+      userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
+      userData.teacherCode = userData.deskId;
+    }
+
+    userData.isVerified = true;
+
+    // Create user in MongoDB
+    user = await User.create(userData);
+
+    if (userData.password) {
+      await user.setPassword(userData.password);
+      await user.save({ validateBeforeSave: false });
+    }
+  } 
+  // Case 2: Login Flow
+  else if (stored.userId) {
+    user = await User.findById(stored.userId);
+    if (!user) return sendError(res, 'User not found', 404);
+  } else {
+    return sendError(res, 'Invalid session data', 400);
+  }
+
   if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
   if (req.body.role && user.role !== req.body.role) {
@@ -530,103 +556,36 @@ const signup = asyncHandler(async (req, res) => {
     }
 
     if (user) {
-      logger.info(`[AUTH] Unverified user exists, updating profile: ${email}`);
-      // Update fields even for existing unverified user to allow correction
-      if (name) user.name = name;
-      if (role) user.role = role;
-      if (institutionType) user.institutionType = institutionType;
-      if (institutionName) user.institutionName = institutionName;
-      if (className) user.className = className;
-      if (rollNumber) user.rollNumber = rollNumber;
-      if (subject) user.subjectId = subject;
-      if (idNumber) user.idNumber = idNumber;
-      if (branch) user.branch = branch;
-      if (course) user.course = course;
-      if (semester) user.semester = semester;
-      if (year) user.year = year;
-
-      if (user.role === 'teacher' && !user.teacherCode) {
-        user.teacherCode = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
-      }
-
-      if (password) {
-        await user.setPassword(password);
-      }
-      
-      // Auto-create/assign College
-      const searchKeyRaw = collegeCode || institutionName || user.institutionName;
-      const searchKey = searchKeyRaw ? searchKeyRaw.trim() : null;
-      if (searchKey) {
-        const safeSearchKey = searchKey.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-        let collegeDoc = await College.findOne({ 
-          $or: [
-            { collegeCode: searchKey.toUpperCase() },
-            { name: new RegExp(`^${safeSearchKey}$`, 'i') }
-          ]
-        });
-        if (!collegeDoc) {
-          collegeDoc = await College.create({ name: searchKey, collegeCode: searchKey.toUpperCase() });
-        }
-        user.college_id = collegeDoc._id;
-        user.institutionName = collegeDoc.name;
-      }
-      
-      await user.save({ validateBeforeSave: false });
-    } else {
-      logger.info(`[AUTH] Creating new user: ${email}`);
-      const userData = {
-        email: email.toLowerCase(),
-        name: name || email.split('@')[0],
-        role: role || 'student',
-        isVerified: false,
-      };
-
-      if (institutionType) userData.institutionType = institutionType;
-      if (institutionName) userData.institutionName = institutionName;
-      if (className) userData.className = className;
-      if (rollNumber) userData.rollNumber = rollNumber;
-      if (subject) userData.subjectId = subject; 
-      if (idNumber) userData.idNumber = idNumber;
-      if (branch) userData.branch = branch;
-      if (course) userData.course = course;
-      if (semester) userData.semester = semester;
-      if (year) userData.year = year;
-
-      if (userData.role === 'teacher') {
-        userData.deskId = 'TCH-' + Math.floor(100000 + Math.random() * 900000).toString();
-        userData.teacherCode = userData.deskId;
-      }
-      
-      // Auto-create/assign College
-      const searchKeyRaw = collegeCode || institutionName || userData.institutionName;
-      const searchKey = searchKeyRaw ? searchKeyRaw.trim() : null;
-      if (searchKey) {
-        const safeSearchKey = searchKey.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-        let collegeDoc = await College.findOne({ 
-          $or: [
-            { collegeCode: searchKey.toUpperCase() },
-            { name: new RegExp(`^${safeSearchKey}$`, 'i') }
-          ]
-        });
-        if (!collegeDoc) {
-          collegeDoc = await College.create({ name: searchKey, collegeCode: searchKey.toUpperCase() });
-        }
-        userData.college_id = collegeDoc._id;
-        userData.institutionName = collegeDoc.name;
-      }
-
-      user = await User.create(userData);
-
-      if (password) {
-        await user.setPassword(password);
-        await user.save({ validateBeforeSave: false });
-      }
+      // If an unverified user somehow exists in the DB (from older versions), we can just proceed.
+      // They will be updated or overwritten upon OTP verification.
+      logger.info(`[AUTH] Unverified user exists in DB. Proceeding with cache for: ${email}`);
     }
+
+    logger.info(`[AUTH] Caching new user signup data: ${email}`);
+    const rawPayload = {
+      email: email.toLowerCase(),
+      name: name || email.split('@')[0],
+      role: role || 'student',
+      password,
+      institutionType,
+      institutionName,
+      className,
+      rollNumber,
+      subject,
+      idNumber,
+      branch,
+      course,
+      semester,
+      year,
+      collegeCode,
+    };
 
     // Generate OTP — stored in Redis (if available) or in-memory fallback
     const otp = generateOtp();
     const otpKey = `otp:${email.toLowerCase()}`;
-    await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 300); // 5 min TTL
+    
+    // Store OTP AND the raw signup payload for 10 minutes (600 seconds)
+    await cache.setJSON(otpKey, { otp, signupPayload: rawPayload }, 600);
 
     logger.info(`[AUTH] Signup OTP generated for: ${email} | cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'}`);
 
@@ -640,7 +599,7 @@ const signup = asyncHandler(async (req, res) => {
         emailSent = true;
         logger.info(`[AUTH] Signup WhatsApp OTP processing started for ${formattedPhone}`);
       } else {
-        await sendOtpEmail(email, otp, user.name || name);
+        await sendOtpEmail(email, otp, user?.name || name || 'User');
         emailSent = true;
         logger.info(`[AUTH] Signup OTP email processing started for ${email}`);
       }
