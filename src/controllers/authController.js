@@ -347,9 +347,10 @@ const verifyOtp = asyncHandler(async (req, res) => {
     const { getSocketServer } = require('../socket/server');
     const io = getSocketServer();
     if (io) {
+      const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
       const targetRoom = user.classroomId
-        ? `classroom:${user.classroomId}`
-        : `edu:${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
+        ? `classroom:${tenantPrefix}${user.classroomId}`
+        : `edu:${tenantPrefix}${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
 
       io.to(targetRoom).emit('teacher:online', {
         teacherName: user.name,
@@ -553,12 +554,14 @@ const signup = asyncHandler(async (req, res) => {
       }
       
       // Auto-create/assign College
-      const searchKey = collegeCode || institutionName || user.institutionName;
+      const searchKeyRaw = collegeCode || institutionName || user.institutionName;
+      const searchKey = searchKeyRaw ? searchKeyRaw.trim() : null;
       if (searchKey) {
+        const safeSearchKey = searchKey.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
         let collegeDoc = await College.findOne({ 
           $or: [
-            { collegeCode: new RegExp(`^${searchKey}$`, 'i') },
-            { name: new RegExp(`^${searchKey}$`, 'i') }
+            { collegeCode: searchKey.toUpperCase() },
+            { name: new RegExp(`^${safeSearchKey}$`, 'i') }
           ]
         });
         if (!collegeDoc) {
@@ -595,12 +598,14 @@ const signup = asyncHandler(async (req, res) => {
       }
       
       // Auto-create/assign College
-      const searchKey = collegeCode || institutionName || userData.institutionName;
+      const searchKeyRaw = collegeCode || institutionName || userData.institutionName;
+      const searchKey = searchKeyRaw ? searchKeyRaw.trim() : null;
       if (searchKey) {
+        const safeSearchKey = searchKey.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
         let collegeDoc = await College.findOne({ 
           $or: [
-            { collegeCode: new RegExp(`^${searchKey}$`, 'i') },
-            { name: new RegExp(`^${searchKey}$`, 'i') }
+            { collegeCode: searchKey.toUpperCase() },
+            { name: new RegExp(`^${safeSearchKey}$`, 'i') }
           ]
         });
         if (!collegeDoc) {
@@ -1073,9 +1078,10 @@ const syncTerminal = asyncHandler(async (req, res) => {
   // Notify students/screens in the same classroom/branch that the teacher is online
   const io = getSocketServer();
   if (io) {
+    const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
     const targetRoom = user.classroomId
-      ? `classroom:${user.classroomId}`
-      : `edu:${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
+      ? `classroom:${tenantPrefix}${user.classroomId}`
+      : `edu:${tenantPrefix}${user.branch || 'any'}:${user.year || 'any'}:${user.semester || 'any'}`;
 
     io.to(targetRoom).emit('teacher:online', {
       teacherName: user.name,

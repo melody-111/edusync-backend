@@ -58,9 +58,20 @@ const resetTransporter = () => {
 const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => {
   const from = fromOverride || process.env.EMAIL_FROM || '"EduSync 🎓" <noreply@edusync.app>';
   
-  // 1. Resend HTTP API
+  // 1. Try SMTP (Nodemailer) first as requested
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    logger.info(`[Email] Sending via SMTP to ${to}`);
+    try {
+      const info = await getTransporter().sendMail({ from, to, subject, html, text });
+      return { messageId: info.messageId, provider: 'smtp' };
+    } catch (err) {
+      logger.warn(`[Email] SMTP failed: ${err.message}. Falling back to HTTP APIs...`);
+    }
+  }
+
+  // 2. Fallback to Resend HTTP API
   if (process.env.RESEND_API_KEY) {
-    logger.info(`[Email] Sending via Resend API to ${to}`);
+    logger.info(`[Email] Sending via Resend API (Fallback) to ${to}`);
     try {
       const res = await axios.post('https://api.resend.com/emails', {
         from, to, subject, html, text
@@ -72,15 +83,13 @@ const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => 
       });
       return { messageId: res.data.id, provider: 'resend' };
     } catch (err) {
-      // Resend failed (e.g. domain not verified) — fall through to SMTP
-      logger.warn(`[Email] Resend API failed: ${err.response?.data?.message || err.message}. Falling back to SMTP...`);
+      logger.warn(`[Email] Resend API failed: ${err.response?.data?.message || err.message}.`);
     }
   }
   
-  // 2. SendGrid HTTP API
+  // 3. Fallback to SendGrid HTTP API
   if (process.env.SENDGRID_API_KEY) {
-    logger.info(`[Email] Sending via SendGrid API to ${to}`);
-    // SendGrid requires a specific 'from' object format if the user provided name & email
+    logger.info(`[Email] Sending via SendGrid API (Fallback) to ${to}`);
     let fromEmail = from;
     let fromName = '';
     const match = from.match(/"?([^"]+)"?\s*<([^>]+)>/);
@@ -108,14 +117,11 @@ const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => 
     } catch (err) {
       const sgErr = err.response?.data?.errors?.[0]?.message || err.message;
       logger.error(`[Email] SendGrid API failed: ${sgErr}`);
-      throw new Error(`SendGrid API Error: ${sgErr}`);
+      throw new Error(`Email Delivery Failed (All providers exhausted). Last Error: ${sgErr}`);
     }
   }
 
-  // 3. Fallback to SMTP (Nodemailer)
-  logger.info(`[Email] Sending via SMTP (Fallback) to ${to}`);
-  const info = await getTransporter().sendMail({ from, to, subject, html, text });
-  return { messageId: info.messageId, provider: 'smtp' };
+  throw new Error('Email Delivery Failed: SMTP failed and no HTTP API fallback configured.');
 };
 
 /**

@@ -120,11 +120,12 @@ const startSession = asyncHandler(async (req, res) => {
   if (io) {
     // Determine the target broadcast room
     let targetRoom = null;
+    const tenantPrefix = teacher.college_id ? `${teacher.college_id}:` : '';
     if (session.classroomId) {
-      targetRoom = `classroom:${session.classroomId}`;
+      targetRoom = `classroom:${tenantPrefix}${session.classroomId}`;
     } else if (session.branch || session.year || session.semester) {
-      // University composite room naming: "edu:BRANCH:YEAR:SEM"
-      targetRoom = `edu:${session.branch || 'any'}:${session.year || 'any'}:${session.semester || 'any'}`;
+      // University composite room naming: "edu:TENANT:BRANCH:YEAR:SEM"
+      targetRoom = `edu:${tenantPrefix}${session.branch || 'any'}:${session.year || 'any'}:${session.semester || 'any'}`;
     }
 
     const broadcastData = {
