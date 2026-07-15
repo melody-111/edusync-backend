@@ -606,13 +606,13 @@ const signup = asyncHandler(async (req, res) => {
     } catch (emailErr) {
       logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${emailErr.message}`);
       logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
-      // Expose the error message for debugging live Render
-      return sendSuccess(res, { email }, `Account created! Email delivery failed: ${emailErr.message}`);
+      // Expose the error message and the OTP for debugging live Render
+      return sendSuccess(res, { email, fallbackOtp: otp }, `Email server blocked delivery. Use fallback OTP: ${otp}`);
     }
 
     const message = emailSent
       ? 'Account created! Please check your email for the OTP to verify your account.'
-      : 'Account created! Email delivery failed — please check spam or contact support. OTP has been logged.';
+      : `Email server blocked delivery. Use fallback OTP: ${otp}`;
 
     return sendSuccess(res, { email }, message);
   } catch (err) {
