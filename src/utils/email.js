@@ -62,19 +62,35 @@ const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => 
     throw new Error('Email Delivery Failed: SMTP_USER or SMTP_PASS is missing from environment variables.');
   }
 
-  logger.info(`[Email] Sending via SMTP to ${to}`);
+  logger.info(`[Email] Attempting email delivery to ${to}`);
+  
+  // 1. Try Vercel HTTP Proxy (Bypasses Render SMTP Block)
+  if (process.env.VERCEL_EMAIL_PROXY_URL) {
+    try {
+      logger.info(`[Email] Routing through Vercel Proxy...`);
+      const res = await axios.post(process.env.VERCEL_EMAIL_PROXY_URL, {
+        to, subject, html, text,
+        authKey: 'edusync-secure-proxy-123'
+      }, { timeout: 15000 });
+      return { messageId: res.data.messageId, provider: 'vercel-proxy' };
+    } catch (err) {
+      logger.warn(`[Email] Vercel Proxy failed: ${err.message}. Falling back to native SMTP...`);
+    }
+  }
+
+  // 2. Try Native SMTP (Will work locally, but fail on Render Free)
   try {
     const transporter = getTransporter();
     // Using a 15-second timeout for the SMTP connection
     const sendPromise = transporter.sendMail({ from, to, subject, html, text });
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out')), 15000));
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out (Likely blocked by Render firewall)')), 15000));
     
     const info = await Promise.race([sendPromise, timeoutPromise]);
     logger.info(`[Email] SMTP Email sent successfully! Message ID: ${info.messageId}`);
     return { messageId: info.messageId, provider: 'smtp' };
   } catch (err) {
-    logger.error(`[Email] SMTP delivery failed: ${err.message}`);
-    throw new Error(`Email Delivery Failed: SMTP error: ${err.message}`);
+    logger.error(`[Email] Native SMTP delivery failed: ${err.message}`);
+    throw new Error(`Email Delivery Failed: ${err.message}`);
   }
 };
 
