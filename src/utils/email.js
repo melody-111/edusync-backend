@@ -1,48 +1,39 @@
 'use strict';
 
 const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const logger = require('./logger');
-const axios = require('axios');
+
+/* ─────────────────────────────────────────────────────────── */
+/*  SMTP Transporter (Primary)                                  */
+/* ─────────────────────────────────────────────────────────── */
 
 let transporter = null;
 
 const buildTransporter = () => {
-  const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
-  const useSecure = process.env.SMTP_SECURE
-    ? process.env.SMTP_SECURE === 'true'
-    : smtpPort === 465;
+  const smtpPort  = parseInt(process.env.SMTP_PORT || '587', 10);
+  const useSecure = smtpPort === 465;
 
-  const config = {
-    host: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
-    port: smtpPort,
+  logger.info(`[Email] Building SMTP transporter → ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${smtpPort}`);
+
+  return nodemailer.createTransport({
+    host:   (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
+    port:   smtpPort,
     secure: useSecure,
+    requireTLS: !useSecure,
     auth: {
-      user: (process.env.SMTP_USER || 'sudhanshusonkar210@gmail.com').trim(),
-      pass: (process.env.SMTP_PASS || 'lscsqhdoxrxdngdp').trim(),
+      user: (process.env.SMTP_USER || '').trim(),
+      pass: (process.env.SMTP_PASS || '').trim(),
     },
-    pool: true,
-    maxConnections: 3,
-    maxMessages: 50,
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000,
-    tls: {
-      rejectUnauthorized: false,
-    },
-  };
-
-  if (!useSecure) {
-    config.requireTLS = true;
-  }
-
-  logger.info(`[Email] Building SMTP fallback transporter: ${config.host}:${smtpPort}`);
-  return nodemailer.createTransport(config);
+    connectionTimeout: 20000,
+    greetingTimeout:   20000,
+    socketTimeout:     20000,
+    tls: { rejectUnauthorized: false },
+  });
 };
 
 const getTransporter = () => {
-  if (!transporter) {
-    transporter = buildTransporter();
-  }
+  if (!transporter) transporter = buildTransporter();
   return transporter;
 };
 
@@ -51,52 +42,68 @@ const resetTransporter = () => {
   logger.info('[Email] Transporter reset');
 };
 
-/**
- * Universal email sender that tries HTTP APIs (Resend, SendGrid) before falling back to SMTP.
- * Render blocks SMTP, so HTTP APIs guarantee delivery in production.
- */
-const sendUniversalEmail = async ({ to, subject, html, text, fromOverride }) => {
-  const from = fromOverride || process.env.EMAIL_FROM || '"EduSync 🎓" <noreply@edusync.app>';
-  
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    throw new Error('Email Delivery Failed: SMTP_USER or SMTP_PASS is missing from environment variables.');
+/* ─────────────────────────────────────────────────────────── */
+/*  SendGrid (Fallback — only if SENDGRID_API_KEY is set)      */
+/* ─────────────────────────────────────────────────────────── */
+
+const sendViaSendGrid = async ({ to, subject, html, text }) => {
+  const apiKey = (process.env.SENDGRID_API_KEY || '').trim();
+  const from   = (process.env.SENDGRID_FROM_EMAIL || process.env.SMTP_USER || '').trim();
+
+  if (!apiKey || !from) throw new Error('SendGrid API key or FROM email not configured');
+
+  sgMail.setApiKey(apiKey);
+  const [response] = await sgMail.send({ to, from, subject, html, text });
+  return { messageId: `sg-${response.headers['x-message-id'] || Date.now()}`, provider: 'sendgrid' };
+};
+
+/* ─────────────────────────────────────────────────────────── */
+/*  Universal Sender: SMTP → SendGrid fallback                  */
+/* ─────────────────────────────────────────────────────────── */
+
+const sendUniversalEmail = async ({ to, subject, html, text }) => {
+  const from = process.env.EMAIL_FROM || `"EduSync 🎓" <${process.env.SMTP_USER}>`;
+
+  if (!process.env.SMTP_USER) {
+    throw new Error('SMTP_USER is not configured in environment variables.');
   }
 
-  logger.info(`[Email] Attempting email delivery to ${to}`);
-  
-  // 1. Try Vercel HTTP Proxy (Bypasses Render SMTP Block)
-  if (process.env.VERCEL_EMAIL_PROXY_URL) {
+  logger.info(`[Email] Sending to ${to}`);
+
+  // ── 1. Try SMTP (Google App Password — works locally & on paid hosting)
+  try {
+    const smtp = getTransporter();
+    const sendPromise    = smtp.sendMail({ from, to, subject, html, text });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SMTP timed out after 20s')), 20000)
+    );
+    const info = await Promise.race([sendPromise, timeoutPromise]);
+    logger.info(`[Email] ✅ SMTP sent! MessageId: ${info.messageId}`);
+    return { messageId: info.messageId, provider: 'smtp' };
+  } catch (smtpErr) {
+    logger.warn(`[Email] SMTP failed: ${smtpErr.message}`);
+  }
+
+  // ── 2. Fallback: SendGrid API
+  if (process.env.SENDGRID_API_KEY) {
     try {
-      logger.info(`[Email] Routing through Vercel Proxy...`);
-      const res = await axios.post(process.env.VERCEL_EMAIL_PROXY_URL, {
-        to, subject, html, text,
-        authKey: 'edusync-secure-proxy-123'
-      }, { timeout: 15000 });
-      return { messageId: res.data.messageId, provider: 'vercel-proxy' };
-    } catch (err) {
-      logger.warn(`[Email] Vercel Proxy failed: ${err.message}. Falling back to native SMTP...`);
+      logger.info(`[Email] Falling back to SendGrid...`);
+      const info = await sendViaSendGrid({ to, subject, html, text });
+      logger.info(`[Email] ✅ SendGrid sent! MessageId: ${info.messageId}`);
+      return info;
+    } catch (sgErr) {
+      logger.warn(`[Email] SendGrid failed: ${sgErr.message}`);
     }
   }
 
-  // 2. Try Native SMTP (Will work locally, but fail on Render Free)
-  try {
-    const transporter = getTransporter();
-    // Using a 15-second timeout for the SMTP connection
-    const sendPromise = transporter.sendMail({ from, to, subject, html, text });
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP connection timed out (Likely blocked by Render firewall)')), 15000));
-    
-    const info = await Promise.race([sendPromise, timeoutPromise]);
-    logger.info(`[Email] SMTP Email sent successfully! Message ID: ${info.messageId}`);
-    return { messageId: info.messageId, provider: 'smtp' };
-  } catch (err) {
-    logger.error(`[Email] Native SMTP delivery failed: ${err.message}`);
-    throw new Error(`Email Delivery Failed: ${err.message}`);
-  }
+  // ── Both failed
+  throw new Error(`Email delivery failed: SMTP timed out and SendGrid is not configured or failed.`);
 };
 
-/**
- * Send an OTP email — EduSync branded
- */
+/* ─────────────────────────────────────────────────────────── */
+/*  OTP Email — EduSync branded                                 */
+/* ─────────────────────────────────────────────────────────── */
+
 const sendOtpEmail = async (to, otp, name = 'User') => {
   const html = `
     <!DOCTYPE html>
@@ -159,45 +166,40 @@ const sendOtpEmail = async (to, otp, name = 'User') => {
   return info;
 };
 
-/**
- * Send session PDF / notes email
- */
-const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl, attachmentPath }) => {
-  // If attachmentPath is provided, SendGrid/Resend API needs different formatting for attachments.
-  // For simplicity, we just fallback to SMTP if attachments are strictly required and API keys are not used,
-  // OR we assume pdfUrl is mostly used. (We skip attachments in HTTP API for now to keep it simple, 
-  // as pdfUrl is the primary delivery method).
+/* ─────────────────────────────────────────────────────────── */
+/*  Session Notes Email                                         */
+/* ─────────────────────────────────────────────────────────── */
+
+const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl }) => {
   const html = `
     <!DOCTYPE html>
     <html>
     <body style="margin:0;padding:0;background:#f4f6fb;font-family:'Inter',Arial,sans-serif;">
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6fb;padding:40px 0;">
-        <tr>
-          <td align="center">
-            <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-              <tr>
-                <td style="background:linear-gradient(135deg,#1a1a2e,#0f3460);padding:32px 40px;text-align:center;">
-                  <h1 style="color:#fff;margin:0;font-size:22px;font-weight:800;">EduSync</h1>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:40px;">
-                  <p style="color:#1a1a2e;font-size:16px;font-weight:600;margin:0 0 12px;">Hi ${name} 👋</p>
-                  <p style="color:#555;font-size:15px;line-height:1.6;margin:0 0 24px;">
-                    Your notes for <strong>${sessionTitle}</strong> have been saved and are ready!
-                  </p>
-                  ${pdfUrl ? `
-                    <div style="text-align:center;margin:24px 0;">
-                      <a href="${pdfUrl}" style="background:#6c63ff;color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
-                        📥 Download PDF
-                      </a>
-                    </div>
-                  ` : ''}
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
+        <tr><td align="center">
+          <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+            <tr>
+              <td style="background:linear-gradient(135deg,#1a1a2e,#0f3460);padding:32px 40px;text-align:center;">
+                <h1 style="color:#fff;margin:0;font-size:22px;font-weight:800;">EduSync</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:40px;">
+                <p style="color:#1a1a2e;font-size:16px;font-weight:600;margin:0 0 12px;">Hi ${name} 👋</p>
+                <p style="color:#555;font-size:15px;line-height:1.6;margin:0 0 24px;">
+                  Your notes for <strong>${sessionTitle}</strong> are ready!
+                </p>
+                ${pdfUrl ? `
+                  <div style="text-align:center;margin:24px 0;">
+                    <a href="${pdfUrl}" style="background:#6c63ff;color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+                      📥 Download PDF
+                    </a>
+                  </div>
+                ` : ''}
+              </td>
+            </tr>
+          </table>
+        </td></tr>
       </table>
     </body>
     </html>
@@ -211,29 +213,28 @@ const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl, attachmentPath }
   });
 };
 
-/**
- * Send a general notification email
- */
+/* ─────────────────────────────────────────────────────────── */
+/*  General Email                                               */
+/* ─────────────────────────────────────────────────────────── */
+
 const sendGeneralEmail = async ({ to, subject, html }) => {
-  return sendUniversalEmail({
-    to,
-    subject,
-    html,
-    text: 'Please view this email in an HTML-compatible email client.',
-  });
+  return sendUniversalEmail({ to, subject, html, text: 'Please view this in an HTML email client.' });
 };
 
+/* ─────────────────────────────────────────────────────────── */
+/*  Startup config check                                        */
+/* ─────────────────────────────────────────────────────────── */
+
 const verifyEmailConfig = async () => {
-  if (process.env.RESEND_API_KEY || process.env.SENDGRID_API_KEY) {
-    logger.info('[Email] Using HTTP API for emails (SMTP bypassed) ✓');
-    return true;
-  }
   try {
     await getTransporter().verify();
-    logger.info('[Email] SMTP connection verified ✓');
+    logger.info('[Email] SMTP Configuration verified successfully.');
     return true;
   } catch (err) {
     logger.warn(`[Email] SMTP verify failed: ${err.message}`);
+    if (process.env.SENDGRID_API_KEY) {
+      logger.info('[Email] SendGrid API key found — will use as fallback.');
+    }
     return false;
   }
 };
