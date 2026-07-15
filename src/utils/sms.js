@@ -40,6 +40,36 @@ const sendOtpSms = async (phone, otp) => {
   }
 };
 
+/**
+ * Send an OTP via WhatsApp using Twilio
+ * @param {string} phone - The recipient's phone number (with country code, e.g. +919876543210)
+ * @param {string} otp - The 6-digit OTP code
+ */
+const sendWhatsAppOtp = async (phone, otp) => {
+  if (!twilioClient || !process.env.TWILIO_PHONE_NUMBER) {
+    logger.warn(`Twilio not configured. Would have sent WhatsApp OTP ${otp} to ${phone}`);
+    return;
+  }
+
+  try {
+    const fromNumber = `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`;
+    const toNumber = `whatsapp:${phone}`;
+    
+    const message = await twilioClient.messages.create({
+      body: `*EduSync*\nYour verification code is: *${otp}*.\n\nValid for 5 minutes. Do not share this code.`,
+      from: fromNumber,
+      to: toNumber,
+    });
+    
+    logger.info(`WhatsApp OTP sent to ${phone} (SID: ${message.sid})`);
+    return message;
+  } catch (error) {
+    logger.error(`Failed to send WhatsApp message to ${phone}: ${error.message}`);
+    throw new Error('Failed to send WhatsApp OTP. Please try again or use email.');
+  }
+};
+
 module.exports = {
   sendOtpSms,
+  sendWhatsAppOtp,
 };

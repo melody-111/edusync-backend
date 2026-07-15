@@ -10,7 +10,7 @@ const QRCode = require('qrcode');
 const User = require('../models/User');
 const { generateTokenPair, verifyRefreshToken } = require('../utils/jwt');
 const { sendOtpEmail } = require('../utils/email');
-const { sendOtpSms } = require('../utils/sms');
+const { sendOtpSms, sendWhatsAppOtp } = require('../utils/sms');
 const { cache } = require('../config/redis');
 const TerminalSession = require('../models/TerminalSession');
 const College = require('../models/College');
@@ -276,9 +276,9 @@ const login = asyncHandler(async (req, res) => {
       let formattedPhone = email.replace(/[\s-]/g, '');
       if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
       
-      await sendOtpSms(formattedPhone, otp);
+      await sendWhatsAppOtp(formattedPhone, otp);
       emailSent = true; // reusing emailSent variable for success flag
-      logger.info(`[AUTH] OTP SMS delivered to ${formattedPhone}`);
+      logger.info(`[AUTH] OTP WhatsApp delivered to ${formattedPhone}`);
     }
   } catch (err) {
     smtpError = err.message;
@@ -636,12 +636,12 @@ const signup = asyncHandler(async (req, res) => {
       if (isPhone) {
         let formattedPhone = email.replace(/[\s-]/g, '');
         if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-        sendOtpSms(formattedPhone, otp).catch(err => {
-          logger.error(`[AUTH] Signup OTP delivery failed for ${formattedPhone}: ${err.message}`);
+        sendWhatsAppOtp(formattedPhone, otp).catch(err => {
+          logger.error(`[AUTH] Signup WhatsApp OTP delivery failed for ${formattedPhone}: ${err.message}`);
           logger.warn(`[AUTH] FALLBACK OTP for signup ${formattedPhone} → ${otp}`);
         });
         emailSent = true;
-        logger.info(`[AUTH] Signup OTP SMS processing started for ${formattedPhone}`);
+        logger.info(`[AUTH] Signup WhatsApp OTP processing started for ${formattedPhone}`);
       } else {
         sendOtpEmail(email, otp, user.name || name).catch(err => {
           logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${err.message}`);
@@ -690,9 +690,9 @@ const forgotPassword = asyncHandler(async (req, res) => {
     if (isPhone) {
       let formattedPhone = email.replace(/[\s-]/g, '');
       if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-      await sendOtpSms(formattedPhone, otp);
+      await sendWhatsAppOtp(formattedPhone, otp);
       emailSent = true;
-      logger.info(`[AUTH] Password reset OTP SMS sent to ${formattedPhone}`);
+      logger.info(`[AUTH] Password reset WhatsApp OTP sent to ${formattedPhone}`);
     } else {
       await sendOtpEmail(user.email, otp, user.name);
       emailSent = true;
