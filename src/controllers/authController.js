@@ -606,6 +606,8 @@ const signup = asyncHandler(async (req, res) => {
     } catch (emailErr) {
       logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${emailErr.message}`);
       logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
+      // Expose the error message for debugging live Render
+      return sendSuccess(res, { email }, `Account created! Email delivery failed: ${emailErr.message}`);
     }
 
     const message = emailSent
