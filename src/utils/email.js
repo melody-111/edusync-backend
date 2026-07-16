@@ -70,7 +70,19 @@ const sendUniversalEmail = async ({ to, subject, html, text }) => {
 
   logger.info(`[Email] Sending to ${to}`);
 
-  // ── 1. Try SMTP (Google App Password — works locally & on paid hosting)
+  // ── 1. Try SendGrid (Primary for Production like Render)
+  if (process.env.SENDGRID_API_KEY) {
+    try {
+      logger.info(`[Email] Attempting to send via SendGrid...`);
+      const info = await sendViaSendGrid({ to, subject, html, text });
+      logger.info(`[Email] ✅ SendGrid sent! MessageId: ${info.messageId}`);
+      return info;
+    } catch (sgErr) {
+      logger.warn(`[Email] SendGrid failed: ${sgErr.message}. Falling back to SMTP...`);
+    }
+  }
+
+  // ── 2. Fallback: Try SMTP (Google App Password)
   try {
     const smtp = getTransporter();
     const sendPromise    = smtp.sendMail({ from, to, subject, html, text });
@@ -84,20 +96,8 @@ const sendUniversalEmail = async ({ to, subject, html, text }) => {
     logger.warn(`[Email] SMTP failed: ${smtpErr.message}`);
   }
 
-  // ── 2. Fallback: SendGrid API
-  if (process.env.SENDGRID_API_KEY) {
-    try {
-      logger.info(`[Email] Falling back to SendGrid...`);
-      const info = await sendViaSendGrid({ to, subject, html, text });
-      logger.info(`[Email] ✅ SendGrid sent! MessageId: ${info.messageId}`);
-      return info;
-    } catch (sgErr) {
-      logger.warn(`[Email] SendGrid failed: ${sgErr.message}`);
-    }
-  }
-
   // ── Both failed
-  throw new Error(`Email delivery failed: SMTP timed out and SendGrid is not configured or failed.`);
+  throw new Error(`Email delivery failed: SendGrid and SMTP both failed.`);
 };
 
 /* ─────────────────────────────────────────────────────────── */
