@@ -383,7 +383,7 @@ const getSharedFiles = asyncHandler(async (req, res) => {
     .populate('folderId', 'name color subject folderType')
     .sort({ createdAt: -1 });
 
-  return sendSuccess(res, 'Shared files fetched', { files });
+  return sendSuccess(res, { files }, 'Shared files fetched');
 });
 
 module.exports = {
