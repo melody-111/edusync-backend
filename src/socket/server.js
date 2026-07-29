@@ -121,6 +121,7 @@ const initSocketServer = async (httpServer) => {
     const pubClient = createRedisClient();
     if (pubClient) {
       const subClient = pubClient.duplicate();
+      subClient.on('error', () => {}); // Prevent Unhandled error crash on duplicate client
       await Promise.all([
         pubClient.connect().catch(() => { }),
         subClient.connect().catch(() => { })
