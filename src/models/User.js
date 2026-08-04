@@ -114,6 +114,7 @@ userSchema.methods.verifyPassword = async function (password) {
 userSchema.methods.toSafeObject = function () {
   return {
     _id: this._id,
+    id: this._id.toString(),
     email: this.email,
     name: this.name,
     avatar: this.avatar,
