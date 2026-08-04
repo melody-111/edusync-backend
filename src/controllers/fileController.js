@@ -101,10 +101,23 @@ const getUserNotes = asyncHandler(async (req, res) => {
     page: parseInt(page, 10),
     limit: parseInt(limit, 10),
     sort: { createdAt: -1 },
-    populate: { path: 'sessionId', select: 'title status startedAt endedAt' },
+    populate: [
+      { path: 'sessionId', select: 'title status startedAt endedAt' },
+      { path: 'folderId', select: 'name color' },
+    ],
   });
 
-  return sendSuccess(res, { files, pagination });
+  // Map folderId object to folderName for easy frontend grouping
+  const enriched = files.map(f => {
+    const plain = f.toObject ? f.toObject() : f;
+    if (plain.folderId && typeof plain.folderId === 'object') {
+      plain.folderName = plain.folderId.name || null;
+      plain.folderId = plain.folderId._id || plain.folderId;
+    }
+    return plain;
+  });
+
+  return sendSuccess(res, { files: enriched, pagination });
 });
 
 // ─── Delete File (Soft) ────────────────────────────────────────────────────────
