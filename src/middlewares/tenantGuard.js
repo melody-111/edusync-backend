@@ -12,8 +12,8 @@ const tenantGuard = (req, res, next) => {
     return sendError(res, 'Unauthorized. Please login.', 401);
   }
 
-  // Super admins don't strictly need a college_id for global operations
-  if (req.user.role === 'super_admin') {
+  // Allow admin complete access
+  if (req.user.role === 'admin') {
     return next();
   }
 

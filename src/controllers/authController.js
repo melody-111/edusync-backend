@@ -307,6 +307,10 @@ const verifyOtp = asyncHandler(async (req, res) => {
   // Case 1: Signup Flow (Delayed DB Insertion)
   if (stored.signupPayload) {
     const userData = stored.signupPayload;
+    // Double-check: ensure role is only teacher or student, never super_admin
+    if (!['teacher', 'student'].includes(userData.role)) {
+      userData.role = 'student';
+    }
     
     // Auto-create/assign College if provided
     const searchKeyRaw = userData.collegeCode || userData.institutionName;
@@ -562,10 +566,12 @@ const signup = asyncHandler(async (req, res) => {
     }
 
     logger.info(`[AUTH] Caching new user signup data: ${email}`);
+    // Strictly sanitize role — only 'teacher' or 'student' allowed via signup
+    const safeRole = role === 'teacher' ? 'teacher' : 'student';
     const rawPayload = {
       email: email.toLowerCase(),
       name: name || email.split('@')[0],
-      role: role || 'student',
+      role: safeRole,
       password,
       institutionType,
       institutionName,
@@ -999,21 +1005,33 @@ const checkTerminalStatus = asyncHandler(async (req, res) => {
  */
 const syncTerminal = asyncHandler(async (req, res) => {
   const { terminalId, qrToken } = req.body;
-  const user = req.user;
+
+  // Always fetch fresh user from DB to guarantee correct role (avoid stale cache / admin bypass)
+  const tokenPayload = req.tokenPayload;
+  if (!tokenPayload || !tokenPayload.sub || tokenPayload.sub === 'admin_101') {
+    return sendError(res, 'Mobile app authentication required. Please scan QR while logged in on mobile app.', 403);
+  }
+
+  const freshUser = await User.findById(tokenPayload.sub);
+  if (!freshUser) return sendError(res, 'User not found', 404);
+  if (!freshUser.isActive) return sendError(res, 'Account is disabled', 403);
+
+  const user = freshUser;
 
   if (!['teacher', 'student'].includes(user.role)) {
-    return sendError(res, 'Invalid role for terminal sync', 403);
+    return sendError(res, 'Invalid role for terminal sync. Only teacher or student accounts can scan QR.', 403);
   }
 
   const terminal = await TerminalSession.findOne({ terminalId, qrToken, status: 'pending' });
-  if (!terminal) return sendError(res, 'Invalid or expired sync token', 400);
+  if (!terminal) return sendError(res, 'QR code expired or already used. Please refresh and scan again.', 400);
 
+  // Enforce strict role check: students cannot scan teacher QRs and vice-versa.
   if (terminal.targetRole && terminal.targetRole !== user.role) {
-    return sendError(res, `Failed to connect: Please use the ${terminal.targetRole} app`, 403);
+    return sendError(res, `Role mismatch: You are a ${user.role} but this QR is for ${terminal.targetRole}s. Please scan the correct QR from your ${user.role} app.`, 403);
   }
 
-  // Generate tokens for the terminal
-  const { accessToken, refreshToken } = generateTokenPair(user);
+  // Generate tokens for the terminal (locked to the actual user's role)
+  const { accessToken, refreshToken } = generateTokenPair({ ...user, _id: user._id });
 
   // Update terminal record
   terminal.status = 'synced';

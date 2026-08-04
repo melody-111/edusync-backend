@@ -20,14 +20,15 @@ const {
   blockUser,
   unblockUser,
   getUserDetails,
+  deleteUser,
 } = require('../controllers/adminController');
 const { authenticate } = require('../middleware/auth');
 const { apiLimiter } = require('../middleware/rateLimiter');
 const { sendError } = require('../utils/helpers');
 
-// Admin-only guard: only the designated admin email or super_admin role can access
+// Admin-only guard: only the designated admin email or admin role can access
 const requireAdmin = (req, res, next) => {
-  if (!req.user || (req.user.role !== 'super_admin' && req.user.email !== process.env.ADMIN_EMAIL)) {
+  if (!req.user || (req.user.role !== 'admin' && req.user.email !== process.env.ADMIN_EMAIL)) {
     return sendError(res, 'Administrator access required', 403);
   }
   next();
@@ -85,5 +86,8 @@ router.post('/users/:id/unblock', unblockUser);
 
 // GET  /admin/users/:id/details    — get comprehensive user details + history
 router.get('/users/:id/details', getUserDetails);
+
+// DELETE /admin/users/:id          — permanently delete user from DB
+router.delete('/users/:id', deleteUser);
 
 module.exports = router;

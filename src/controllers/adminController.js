@@ -446,7 +446,7 @@ exports.getInstitutionHierarchy = asyncHandler(async (req, res) => {
 
   // Handle users without a college_id (Unassigned)
   const unassignedUsers = await User.aggregate([
-    { $match: { college_id: null, role: { $ne: 'super_admin' }, isVerified: true } },
+    { $match: { college_id: null, role: { $ne: 'admin' }, isVerified: true } },
     {
       $project: {
         _id: 1,
@@ -494,7 +494,7 @@ exports.blockUser = asyncHandler(async (req, res) => {
 
   logActivity({
     userId: req.user._id,
-    actorRole: 'super_admin',
+    actorRole: 'admin',
     action: 'admin.user.block',
     category: 'system',
     details: { targetUserId: id, reason },
@@ -519,7 +519,7 @@ exports.unblockUser = asyncHandler(async (req, res) => {
 
   logActivity({
     userId: req.user._id,
-    actorRole: 'super_admin',
+    actorRole: 'admin',
     action: 'admin.user.unblock',
     category: 'system',
     details: { targetUserId: id },
@@ -548,3 +548,48 @@ exports.getUserDetails = asyncHandler(async (req, res) => {
   });
 });
 
+// ─── Permanently Delete User ─────────────────────────────────────────────────
+/**
+ * DELETE /admin/users/:id
+ * Permanently removes a user + clears their cache and related data.
+ */
+exports.deleteUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.isValidObjectId(id)) {
+    return sendError(res, 'Invalid user ID', 400);
+  }
+
+  const user = await User.findById(id);
+  if (!user) return sendError(res, 'User not found', 404);
+
+  // Prevent deleting admin accounts
+  if (user.role === 'admin') {
+    return sendError(res, 'Cannot delete admin accounts', 403);
+  }
+
+  const email = user.email;
+  const name = user.name;
+
+  // 1. Delete user from MongoDB
+  await User.findByIdAndDelete(id);
+
+  // 2. Clear user from cache (prevent stale sessions)
+  await cache.del(`user:${id}`);
+
+  // 3. Clean up related data
+  try { await Session.deleteMany({ teacherId: id }); } catch (e) {}
+  try { await Device.deleteMany({ userId: id }); } catch (e) {}
+  try { await Notification.deleteMany({ userId: id }); } catch (e) {}
+  try { await ActivityLog.deleteMany({ userId: id }); } catch (e) {}
+
+  logActivity({
+    userId: req.user._id || 'admin_101',
+    actorRole: 'admin',
+    action: 'admin.user.delete',
+    category: 'admin',
+    meta: { deletedUserId: id, deletedEmail: email, deletedName: name }
+  });
+
+  return sendSuccess(res, { deletedId: id, email, name }, `User "${name}" permanently deleted.`);
+});

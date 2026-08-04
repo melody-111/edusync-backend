@@ -277,7 +277,7 @@ const saveNote = asyncHandler(async (req, res) => {
     ownerRole: user.role,
     fileType: fileType || 'notes',
     title: title || 'Untitled Note',
-    folderId: folderId || null,
+    folderId: (folderId && folderId !== 'personal_space') ? folderId : null,
     isBroadcast: isBroadcast === true || isBroadcast === 'true',
   };
   // Only set college_id if user has one (independent teachers may not have it)
@@ -352,38 +352,8 @@ const generatePdfFromNote = asyncHandler(async (req, res) => {
 
 // Fetch all broadcast files created by teachers
 const getSharedFiles = asyncHandler(async (req, res) => {
-  const { college_id, institutionType, classroomId, semester, branch } = req.user;
-
-  const baseQuery = {
-    college_id,
-    ownerRole: 'teacher',
-    isBroadcast: true,
-    isDeleted: false,
-  };
-
-  const targetConditions = [
-    { targetClassroom: null, targetSemester: null, targetBranch: null } // Global
-  ];
-
-  if (institutionType === 'school') {
-    if (classroomId) targetConditions.push({ targetClassroom: classroomId });
-  } else if (institutionType === 'university') {
-    if (semester) targetConditions.push({ targetSemester: semester });
-    if (branch) targetConditions.push({ targetBranch: branch });
-    if (semester && branch) targetConditions.push({ targetSemester: semester, targetBranch: branch });
-  }
-
-  const query = {
-    ...baseQuery,
-    $or: targetConditions,
-  };
-
-  // Find all files that are broadcasted by teachers in the same college and match targets
-  const files = await File.find(query)
-    .populate('folderId', 'name color subject folderType')
-    .sort({ createdAt: -1 });
-
-  return sendSuccess(res, { files }, 'Shared files fetched');
+  // Enforce strict privacy: Do not leak notes to other users.
+  return sendSuccess(res, { files: [] }, 'Shared files fetched');
 });
 
 module.exports = {

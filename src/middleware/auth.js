@@ -19,13 +19,13 @@ const authenticate = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (apiKey === adminSecret || (authHeader && (authHeader === `Bearer ${adminSecret}` || authHeader === adminSecret))) {
        req.user = { 
-          _id: 'super_admin_101', 
-          name: 'EduSync Super Admin', 
+          _id: 'admin_101', 
+          name: 'EduSync Admin', 
           email: process.env.ADMIN_EMAIL || 'sudhanshu@edusync.com',
-          role: 'super_admin',
+          role: 'admin',
           isActive: true
        };
-       req.tokenPayload = { sub: 'super_admin_101', role: 'super_admin' };
+       req.tokenPayload = { sub: 'admin_101', role: 'admin' };
        return next();
     }
 
