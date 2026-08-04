@@ -71,6 +71,19 @@ const getFile = asyncHandler(async (req, res) => {
     return sendError(res, 'Access denied', 403);
   }
 
+  // If content is in cloud, proxy the download to avoid CORS issues on frontend
+  if (!file.canvasData && file.cloudUrl) {
+    try {
+      const { downloadCanvasData } = require('../services/cloudStorage');
+      const cloudContent = await downloadCanvasData(file.cloudUrl);
+      if (cloudContent) {
+        file.canvasData = cloudContent;
+      }
+    } catch (e) {
+      // Proceed even if cloud fetch fails
+    }
+  }
+
   return sendSuccess(res, { file });
 });
 
