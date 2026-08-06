@@ -25,10 +25,14 @@ const startSession = asyncHandler(async (req, res) => {
   const teacher = req.user;
 
 
-  // Check if teacher has an active session already
+  // Auto-end any existing active session so teacher can start/reopen notes without friction
   const existing = await Session.findOne({ teacherId: teacher._id, status: 'active' });
   if (existing) {
-    return sendError(res, 'You already have an active session. End it before starting a new one.', 409);
+    await Session.findByIdAndUpdate(existing._id, {
+      status: 'ended',
+      endedAt: new Date(),
+    });
+    logger.info(`Auto-ended previous session ${existing._id} for teacher ${teacher._id}`);
   }
 
   const sessionId = uuidv4();
@@ -242,10 +246,10 @@ const startSelfSession = asyncHandler(async (req, res) => {
   const { title, subject } = req.body;
   const user = req.user;
 
-  // Check if user has an active session
+  // Auto-end any existing active session
   const existing = await Session.findOne({ ownerId: user._id, status: 'active' });
   if (existing) {
-    return sendError(res, 'You already have an active session.', 409);
+    await Session.findByIdAndUpdate(existing._id, { status: 'ended', endedAt: new Date() });
   }
 
   const sessionId = uuidv4();
