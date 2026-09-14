@@ -59,6 +59,7 @@ const fileSchema = new mongoose.Schema(
     targetClassroom: { type: String, default: null },
     targetSemester: { type: String, default: null },
     targetBranch: { type: String, default: null },
+    sharedWithClasses: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Cohort' }],
 
     // Auto-save tracking
     isAutoSaved: { type: Boolean, default: false },

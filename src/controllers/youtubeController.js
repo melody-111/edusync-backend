@@ -15,31 +15,21 @@ const searchVideos = asyncHandler(async (req, res) => {
     return sendError(res, 'Query parameter is required', 400);
   }
 
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) {
-    return sendError(res, 'YouTube API key not configured', 500);
-  }
+  // yt-search doesn't need API key, so we skip checking it here.
 
   try {
-    const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-      params: {
-        part: 'snippet',
-        q: query,
-        type: 'video',
-        maxResults: Math.min(parseInt(maxResults), 50),
-        pageToken: pageToken || undefined,
-        key: apiKey,
-        relevanceLanguage: 'en',
-      },
-    });
-
-    const videos = response.data.items.map(item => ({
-      videoId: item.id.videoId,
-      title: item.snippet.title,
-      description: item.snippet.description,
-      thumbnail: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
-      channelTitle: item.snippet.channelTitle,
-      publishedAt: item.snippet.publishedAt,
+    const yts = require('yt-search');
+    // Ensure the query returns educational content
+    const educationalQuery = query + ' educational tutorial lesson';
+    const r = await yts(educationalQuery);
+    
+    const videos = r.videos.slice(0, Math.min(parseInt(maxResults), 50)).map(v => ({
+      videoId: v.videoId,
+      title: v.title,
+      description: v.description,
+      thumbnail: v.thumbnail || v.image,
+      channelTitle: v.author.name,
+      publishedAt: v.ago,
     }));
 
     if (req.user) {
@@ -54,12 +44,12 @@ const searchVideos = asyncHandler(async (req, res) => {
 
     return sendSuccess(res, {
       videos,
-      nextPageToken: response.data.nextPageToken,
-      prevPageToken: response.data.prevPageToken,
-      totalResults: response.data.pageInfo?.totalResults,
+      nextPageToken: null,
+      prevPageToken: null,
+      totalResults: videos.length,
     });
   } catch (error) {
-    console.error('YouTube API Error:', error.response?.data || error.message);
+    console.error('YouTube Scraper Error:', error);
     return sendError(res, 'Failed to search YouTube videos', 500);
   }
 });

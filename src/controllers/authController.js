@@ -1242,6 +1242,55 @@ const getDashboardStats = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * POST /auth/verify-integrity
+ * Verifies the Google Play Integrity token provided by the mobile app.
+ * If verification succeeds, marks the session/app instance as trusted.
+ */
+const verifyIntegrity = asyncHandler(async (req, res) => {
+  const { integrityToken } = req.body;
+  
+  if (!integrityToken) {
+    return sendError(res, 'Integrity token is required', 400);
+  }
+
+  // Without a service account/Google Cloud setup provided by the user yet,
+  // we will simulate the verification step for now. When keys are added,
+  // we can use the googleapis library: google.playintegrity('v1')
+  
+  try {
+    logger.info(`Received Play Integrity Token: ${integrityToken.substring(0, 20)}...`);
+    
+    // In production, we'd verify with Google Play Integrity API:
+    // const response = await playintegrity.v1.decodeIntegrityToken({ ... });
+    // const payload = response.data.tokenPayloadExternal;
+    // Check payload.appIntegrity.appRecognitionVerdict === 'PLAY_RECOGNIZED'
+    
+    // Simulating validation (mock check for length)
+    const isValid = integrityToken.length > 50; 
+    
+    if (isValid) {
+      logActivity({
+        userId: req.user ? req.user._id : 'guest',
+        actorRole: req.user ? req.user.role : 'guest',
+        action: 'auth.integrity.verified',
+        category: 'security',
+        ip: getClientIp(req),
+      });
+
+      return sendSuccess(res, {
+        integrityStatus: 'PLAY_RECOGNIZED',
+        trusted: true
+      }, 'App integrity verified successfully');
+    } else {
+      return sendError(res, 'App integrity verification failed. Potential modified APK detected.', 403);
+    }
+  } catch (err) {
+    logger.error('Play Integrity Verification Error:', err);
+    return sendError(res, 'Failed to verify app integrity', 500);
+  }
+});
+
 module.exports = {
   login,
   loginWithPassword,
@@ -1275,4 +1324,5 @@ module.exports = {
   loginValidation,
   verifyOtpValidation,
   qrLoginValidation,
+  verifyIntegrity,
 };

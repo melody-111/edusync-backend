@@ -8,7 +8,7 @@ const {
   saveStrokeBatch, getPageStrokes,
   createPage, getSessionPages,
   saveNote, generatePdfFromNote,
-  getSharedFiles
+  getSharedFiles, shareFileToClass
 } = require('../controllers/fileController');
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
@@ -26,6 +26,7 @@ router.get('/shared', getSharedFiles);
 
 // File CRUD
 router.post('/upload', uploadLimiter, upload.single('file'), uploadFile);
+router.post('/share', shareFileToClass);
 router.post('/note', saveNote);
 router.get('/:id/pdf', generatePdfFromNote);
 router.get('/:id', getFile);

@@ -27,8 +27,8 @@ const createLimiter = (windowMs, max, message) => {
 // Auth endpoints — Strict to prevent brute-force and spam
 const authLimiter = createLimiter(
   15 * 60 * 1000, // 15 min
-  50,             // Allow 50 attempts (increased for testing)
-  'Too many login attempts. Please try again in 15 minutes.'
+  5,              // Allow 5 attempts before 15-minute block
+  'Too many login attempts. Your IP has been temporarily blocked for 15 minutes.'
 );
 
 // OTP — Very strict

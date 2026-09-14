@@ -11,10 +11,11 @@ const {
   getDashboardStats,
   loginValidation, verifyOtpValidation, qrLoginValidation,
   setup2FA, enable2FA, verify2FA, disable2FA, check2FAStatus,
+  verifyIntegrity,
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
+const { authLimiter, otpLimiter, apiLimiter } = require('../middleware/rateLimiter');
 
 /**
  * @swagger
@@ -112,5 +113,9 @@ router.post('/2fa/disable', authenticate, disable2FA);
 
 // GET /auth/2fa/status — check 2FA status
 router.get('/2fa/status', authenticate, check2FAStatus);
+
+// ─── Play Integrity ─────────────────────────────────────────────────────────────
+// POST /auth/verify-integrity — verify Play Integrity token from mobile app
+router.post('/verify-integrity', apiLimiter, verifyIntegrity);
 
 module.exports = router;

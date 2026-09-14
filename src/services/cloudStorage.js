@@ -115,16 +115,15 @@ const downloadCanvasData = async (cloudUrl) => {
   if (!cloudUrl) return null;
 
   try {
-    // Use dynamic import for node-fetch (ESM module)
-    const response = await fetch(cloudUrl);
-    if (!response.ok) {
+    const axios = require('axios');
+    const response = await axios.get(cloudUrl, { responseType: 'text' });
+    
+    if (response.status !== 200) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const text = await response.text();
-
-    // If the content looks like JSON, return as-is
-    // If base64, it's already been stored as image on Cloudinary
+    const text = typeof response.data === 'object' ? JSON.stringify(response.data) : response.data;
+    logger.info(`☁️  Cloudinary download success for ${cloudUrl}. Length: ${text?.length}`);
     return text;
   } catch (err) {
     logger.error(`☁️  Cloudinary download failed for ${cloudUrl}: ${err.message}`);

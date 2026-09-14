@@ -108,10 +108,8 @@ const initSocketServer = async (httpServer) => {
     pingInterval: 20000,
     pingTimeout: 20000,
     maxHttpBufferSize: 5e6, // 5MB limit per message
-    perMessageDeflate: {
-      threshold: 1024, // only compress messages > 1kb
-    },
-    transports: ['websocket', 'polling'], // Essential for iOS/Android fallback
+    perMessageDeflate: false, // Disable per-message compression for lowest latency (<30ms)
+    transports: ['websocket'], // Force WebSocket only, disable polling for latency
     allowEIO3: true,
     connectTimeout: 30000,
   });
@@ -154,6 +152,11 @@ const initSocketServer = async (httpServer) => {
       socket.join(queryRoomId);
       socket.currentRoomId = queryRoomId;
       logger.debug(`Socket ${userId} joined room from query: ${queryRoomId}`);
+    }
+
+    // Join personal room for cross-device syncing (e.g. mobile app sync)
+    if (userId) {
+      socket.join(userId.toString());
     }
 
     logger.info(`Socket connected: ${userId} (${userRole}) [${socket.id}]`);

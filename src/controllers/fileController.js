@@ -6,15 +6,16 @@ const StrokeBatch = require('../models/StrokeBatch');
 const Session = require('../models/Session');
 const User = require('../models/User');
 const { compressStrokes, decompressStrokes } = require('../utils/compression');
+const { getSocketServer } = require('../socket/server');
 const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
-const { uploadCanvasData, uploadThumbnail, deleteFromCloud, isCloudEnabled } = require('../services/cloudStorage');
+const { uploadCanvasData, uploadThumbnail, deleteFromCloud, isCloudEnabled, downloadCanvasData } = require('../services/cloudStorage');
 
 // ─── Upload File ───────────────────────────────────────────────────────────────
 const uploadFile = asyncHandler(async (req, res) => {
   if (!req.file) return sendError(res, 'No file provided', 400);
 
-  const { sessionId, fileType, title, isBroadcast } = req.body;
+  const { sessionId, fileType, title, isBroadcast, folderId } = req.body;
   const user = req.user;
 
   // Teachers can broadcast; students cannot
@@ -32,6 +33,7 @@ const uploadFile = asyncHandler(async (req, res) => {
   const file = await File.create({
     college_id: user.college_id,
     sessionId: sessionDoc?._id || null,
+    folderId: folderId || null,
     ownerId: user._id,
     ownerRole: user.role,
     fileType: fileType || 'notes',
@@ -55,6 +57,11 @@ const uploadFile = asyncHandler(async (req, res) => {
     details: { fileId: file._id, fileType: file.fileType, size: file.size },
   });
 
+  const _io = getSocketServer();
+  if (_io) {
+    _io.to(user._id.toString()).emit('note:sync', { file });
+  }
+
   return sendSuccess(res, { file }, 'File uploaded', 201);
 });
 
@@ -76,11 +83,15 @@ const getFile = asyncHandler(async (req, res) => {
     try {
       const { downloadCanvasData } = require('../services/cloudStorage');
       const cloudContent = await downloadCanvasData(file.cloudUrl);
-      if (cloudContent) {
+      if (cloudContent && cloudContent.length > 0) {
         file.canvasData = cloudContent;
+        logger.info(`[getFile] Loaded canvasData from Cloudinary for file ${id}. Length: ${cloudContent.length}`);
+      } else {
+        logger.warn(`[getFile] Cloudinary returned empty content for file ${id}. URL: ${file.cloudUrl}`);
       }
     } catch (e) {
-      // Proceed even if cloud fetch fails
+      logger.error(`[getFile] Cloudinary download failed for file ${id}: ${e.message}`);
+      // Proceed with null canvasData — frontend will show empty canvas
     }
   }
 
@@ -243,14 +254,50 @@ const getSessionPages = asyncHandler(async (req, res) => {
 
 // ─── Save Note (Canvas Persistence) ─────────────────────────────────────────
 const saveNote = asyncHandler(async (req, res) => {
-  const { title, canvasData, thumbnailImage, fileType, folderId, id, isBroadcast } = req.body;
+  const { title, canvasData, thumbnailImage, fileType, folderId, id, isBroadcast, folderName, subject } = req.body;
   const user = req.user;
+  const Folder = require('../models/Folder');
+
+  // Resolve Folder: if folderId is valid ObjectId use it, else try resolving by folderName or subject
+  let resolvedFolderId = (folderId && folderId !== 'personal_space' && typeof folderId === 'string' && folderId.match(/^[0-9a-fA-F]{24}$/)) ? folderId : null;
+  const folderNameInput = folderName || subject || (folderId && !resolvedFolderId && typeof folderId === 'string' ? folderId : null);
+
+  if (!resolvedFolderId && folderNameInput && folderNameInput !== 'personal_space' && folderNameInput !== 'session_notes') {
+    const targetName = folderNameInput.trim();
+    let folder = await Folder.findOne({
+      ownerId: user._id,
+      name: { $regex: new RegExp(`^${targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      isDeleted: false
+    });
+    if (!folder) {
+      try {
+        folder = await Folder.create({
+          name: targetName,
+          ownerId: user._id,
+          ownerRole: user.role,
+          subject: targetName,
+          folderType: 'notes',
+          color: req.body.folderColor || '#3b82f6'
+        });
+      } catch (err) {
+        if (err.code === 11000) {
+          folder = await Folder.findOne({
+            ownerId: user._id,
+            name: { $regex: new RegExp(`^${targetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+            isDeleted: false
+          });
+        }
+      }
+    }
+    if (folder) resolvedFolderId = folder._id;
+  }
 
   // ── UPDATE existing note ────────────────────────────────────────────────
   if (id && id.match(/^[0-9a-fA-F]{24}$/)) {
     const existingFile = await File.findOne({ _id: id, ownerId: user._id });
-      if (existingFile) {
+    if (existingFile) {
       const updateData = { title, updatedAt: new Date() };
+      if (resolvedFolderId) updateData.folderId = resolvedFolderId;
       
       if (isBroadcast !== undefined) {
         updateData.isBroadcast = isBroadcast === true || isBroadcast === 'true';
@@ -293,6 +340,12 @@ const saveNote = asyncHandler(async (req, res) => {
         updateData,
         { new: true }
       );
+      
+      const _io = getSocketServer();
+      if (_io) {
+        _io.to(user._id.toString()).emit('note:sync', { file });
+      }
+      
       return sendSuccess(res, { file }, 'Note updated');
     }
   }
@@ -303,7 +356,7 @@ const saveNote = asyncHandler(async (req, res) => {
     ownerRole: user.role,
     fileType: fileType || 'notes',
     title: title || 'Untitled Note',
-    folderId: (folderId && folderId !== 'personal_space') ? folderId : null,
+    folderId: resolvedFolderId || null,
     isBroadcast: isBroadcast === true || isBroadcast === 'true',
   };
   // Only set college_id if user has one (independent teachers may not have it)
@@ -333,6 +386,11 @@ const saveNote = asyncHandler(async (req, res) => {
 
   const fileDoc = new File(createData);
   const file = await fileDoc.save({ validateBeforeSave: false });
+
+  const _io = getSocketServer();
+  if (_io) {
+    _io.to(user._id.toString()).emit('note:sync', { file });
+  }
 
   return sendSuccess(res, { file }, 'Note saved', 201);
 });
@@ -376,10 +434,32 @@ const generatePdfFromNote = asyncHandler(async (req, res) => {
   }
 });
 
-// Fetch all broadcast files created by teachers
+const shareFileToClass = asyncHandler(async (req, res) => {
+  const { fileId, cohortId } = req.body;
+  if (!fileId || !cohortId) return sendError(res, 'File ID and Cohort ID are required', 400);
+  
+  const file = await File.findOne({ _id: fileId, ownerId: req.user._id });
+  if (!file) return sendError(res, 'File not found or unauthorized', 404);
+
+  if (!file.sharedWithClasses.includes(cohortId)) {
+    file.sharedWithClasses.push(cohortId);
+    await file.save();
+  }
+
+  return sendSuccess(res, { file }, 'File shared successfully');
+});
+
 const getSharedFiles = asyncHandler(async (req, res) => {
-  // Enforce strict privacy: Do not leak notes to other users.
-  return sendSuccess(res, { files: [] }, 'Shared files fetched');
+  const user = req.user;
+  
+  let sharedFiles = [];
+  if (user.role === 'student' && user.cohort_id) {
+    sharedFiles = await File.find({ sharedWithClasses: user.cohort_id, isDeleted: false })
+      .populate('ownerId', 'name')
+      .sort({ updatedAt: -1 });
+  }
+
+  return sendSuccess(res, { files: sharedFiles }, 'Shared files fetched');
 });
 
 module.exports = {
@@ -395,6 +475,7 @@ module.exports = {
   saveNote,
   generatePdfFromNote,
   getSharedFiles,
+  shareFileToClass,
 };
 
 module.exports.getSharedFiles = getSharedFiles;
