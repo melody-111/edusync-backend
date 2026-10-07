@@ -31,6 +31,9 @@ router.post('/login', authLimiter, loginValidation, validate, login);
 // POST /auth/login-password — login with email and password
 router.post('/login-password', authLimiter, validate, loginWithPassword);
 
+// GET /auth/colleges/search — search existing colleges by name (public)
+router.get('/colleges/search', authLimiter, require('../controllers/authController').searchCollegesPublic);
+
 // POST /auth/signup — register new user
 router.post('/signup', authLimiter, validate, require('../controllers/authController').signup);
 

@@ -131,7 +131,9 @@ const startSession = asyncHandler(async (req, res) => {
     // Determine the target broadcast room
     let targetRoom = null;
     const tenantPrefix = teacher.college_id ? `${teacher.college_id}:` : '';
-    if (session.classroomId) {
+    if (session.className && session.section) {
+      targetRoom = `school:${tenantPrefix}${session.className}:${session.section}`;
+    } else if (session.classroomId) {
       targetRoom = `classroom:${tenantPrefix}${session.classroomId}`;
     } else if (session.className || session.section) {
       // School composite room naming: "school:TENANT:CLASS:SECTION"

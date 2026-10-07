@@ -1086,6 +1086,23 @@ const syncTerminal = asyncHandler(async (req, res) => {
 });
 
 // Search teacher by ID or deskId
+
+/**
+ * GET /auth/colleges/search?q=XYZ
+ * Public endpoint to search for existing colleges by name
+ */
+const searchCollegesPublic = asyncHandler(async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.length < 2) return sendSuccess(res, []);
+  
+  const safeSearchKey = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const colleges = await College.find({ name: new RegExp(safeSearchKey, 'i') })
+    .limit(10)
+    .select('name collegeCode institutionType');
+    
+  sendSuccess(res, colleges);
+});
+
 const searchTeacher = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -1303,6 +1320,7 @@ const verifyIntegrity = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  searchCollegesPublic,
   login,
   loginWithPassword,
   verifyOtp,
