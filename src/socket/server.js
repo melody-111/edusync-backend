@@ -194,6 +194,14 @@ const initSocketServer = async (httpServer) => {
         socket.join(compositeGroup);
         logger.debug(`${userRole} ${userId} joined school group: ${compositeGroup}`);
 
+        // Fallbacks for school students when teacher inputs "Class X" or "X"
+        if (user.className) {
+          socket.join(`classroom:${tenantPrefix}${user.className}`);
+          socket.join(`classroom:${tenantPrefix}Class ${user.className}`);
+          socket.join(`school:${tenantPrefix}${user.className}:any`);
+          socket.join(`school:${tenantPrefix}Class ${user.className}:any`);
+        }
+
         if (userRole === 'teacher') {
           socket.to(compositeGroup).emit('teacher:online', {
             teacherId: userId,

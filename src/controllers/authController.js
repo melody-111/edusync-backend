@@ -541,7 +541,7 @@ const logout = asyncHandler(async (req, res) => {
 const signup = asyncHandler(async (req, res) => {
   const { 
     email, password, name, role, institutionType, 
-    className, rollNumber, subject, idNumber, 
+    className, section, rollNumber, subject, idNumber, 
     branch, course, semester, year, institutionName, collegeCode
   } = req.body;
 
@@ -576,6 +576,7 @@ const signup = asyncHandler(async (req, res) => {
       institutionType,
       institutionName,
       className,
+      section,
       rollNumber,
       subject,
       idNumber,

@@ -25,6 +25,12 @@ const startSession = asyncHandler(async (req, res) => {
   const teacher = req.user;
 
 
+
+  // Fallback for school mode if only classroomId is provided but it looks like a class (e.g. "Class 10" or "10")
+  if (classroomId && !className && !branch) {
+    req.body.className = classroomId;
+  }
+
   // Auto-end any existing active session so teacher can start/reopen notes without friction
   const existing = await Session.findOne({ teacherId: teacher._id, status: 'active' });
   if (existing) {
@@ -248,6 +254,12 @@ const startSession = asyncHandler(async (req, res) => {
 const startSelfSession = asyncHandler(async (req, res) => {
   const { title, subject } = req.body;
   const user = req.user;
+
+
+  // Fallback for school mode if only classroomId is provided but it looks like a class (e.g. "Class 10" or "10")
+  if (classroomId && !className && !branch) {
+    req.body.className = classroomId;
+  }
 
   // Auto-end any existing active session
   const existing = await Session.findOne({ ownerId: user._id, status: 'active' });
