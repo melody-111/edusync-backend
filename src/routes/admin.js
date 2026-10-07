@@ -21,6 +21,7 @@ const {
   unblockUser,
   getUserDetails,
   deleteUser,
+  getInstitutionStats,
 } = require('../controllers/adminController');
 const { authenticate } = require('../middleware/auth');
 const { apiLimiter } = require('../middleware/rateLimiter');
@@ -40,6 +41,9 @@ router.use(requireAdmin);
 
 // GET  /admin/stats              — global dashboard stats
 router.get('/stats', getGlobalStats);
+
+// GET  /admin/institution-stats  — stats per college/school
+router.get('/institution-stats', getInstitutionStats);
 
 // GET  /admin/logs               — system wide audit logs
 router.get('/logs', getSystemLogs);

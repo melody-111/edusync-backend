@@ -992,7 +992,7 @@ const checkTerminalStatus = asyncHandler(async (req, res) => {
       status: 'synced',
       accessToken: terminal.accessToken,
       refreshToken: terminal.refreshToken,
-      user: terminal.userId ? terminal.userId.toSafeObject() : null,
+      user: terminal.userId ? (typeof terminal.userId.toSafeObject === 'function' ? terminal.userId.toSafeObject() : terminal.userId) : null,
     }, 'Terminal synced successfully');
   }
 
@@ -1045,7 +1045,17 @@ const syncTerminal = asyncHandler(async (req, res) => {
   notifyTerminalSynced(terminalId, {
     accessToken,
     refreshToken,
-    user: user.toSafeObject(),
+    user: typeof user.toSafeObject === 'function' ? user.toSafeObject() : {
+      _id: user._id,
+      id: user._id?.toString(),
+      email: user.email,
+      name: user.name,
+      avatar: user.avatar,
+      role: user.role,
+      deskId: user.deskId,
+      classroomId: user.classroomId,
+      teacherCode: user.teacherCode
+    },
   });
 
   // Notify students/screens in the same classroom/branch that the teacher is online

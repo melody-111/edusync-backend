@@ -593,3 +593,60 @@ exports.deleteUser = asyncHandler(async (req, res) => {
 
   return sendSuccess(res, { deletedId: id, email, name }, `User "${name}" permanently deleted.`);
 });
+
+exports.getInstitutionStats = asyncHandler(async (req, res) => {
+  const File = require('../models/File');
+  const User = require('../models/User');
+  const College = require('../models/College');
+
+  const stats = await College.aggregate([
+    {
+      $lookup: {
+        from: 'users',
+        localField: '_id',
+        foreignField: 'college_id',
+        as: 'users'
+      }
+    },
+    {
+      $lookup: {
+        from: 'files',
+        localField: '_id',
+        foreignField: 'college_id',
+        as: 'files'
+      }
+    },
+    {
+      $project: {
+        _id: 1,
+        name: 1,
+        collegeCode: 1,
+        totalStudents: {
+          $size: {
+            $filter: {
+              input: '$users',
+              as: 'user',
+              cond: { $eq: ['$$user.role', 'student'] }
+            }
+          }
+        },
+        totalTeachers: {
+          $size: {
+            $filter: {
+              input: '$users',
+              as: 'user',
+              cond: { $eq: ['$$user.role', 'teacher'] }
+            }
+          }
+        },
+        totalNotesSaved: { $size: '$files' },
+        totalCloudUsageBytes: {
+          $sum: '$users.cloudStorageUsed'
+        }
+      }
+    },
+    { $sort: { totalNotesSaved: -1 } }
+  ]);
+
+  return sendSuccess(res, { stats }, 'Institution stats fetched successfully');
+});

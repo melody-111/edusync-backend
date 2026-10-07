@@ -187,6 +187,22 @@ const initSocketServer = async (httpServer) => {
         }
       }
 
+      // School Style Targeting (Class Name / Section)
+      if (user.className || user.section) {
+        const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
+        const compositeGroup = `school:${tenantPrefix}${user.className || 'any'}:${user.section || 'any'}`;
+        socket.join(compositeGroup);
+        logger.debug(`${userRole} ${userId} joined school group: ${compositeGroup}`);
+
+        if (userRole === 'teacher') {
+          socket.to(compositeGroup).emit('teacher:online', {
+            teacherId: userId,
+            teacherName: user.name,
+            message: `${user.name} is online.`
+          });
+        }
+      }
+
       // University Style Targeting (Branch / Year / Sem)
       if (user.branch || user.year || user.semester) {
         const tenantPrefix = user.college_id ? `${user.college_id}:` : '';

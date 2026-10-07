@@ -127,6 +127,9 @@ const startSession = asyncHandler(async (req, res) => {
     const tenantPrefix = teacher.college_id ? `${teacher.college_id}:` : '';
     if (session.classroomId) {
       targetRoom = `classroom:${tenantPrefix}${session.classroomId}`;
+    } else if (session.className || session.section) {
+      // School composite room naming: "school:TENANT:CLASS:SECTION"
+      targetRoom = `school:${tenantPrefix}${session.className || 'any'}:${session.section || 'any'}`;
     } else if (session.branch || session.year || session.semester) {
       // University composite room naming: "edu:TENANT:BRANCH:YEAR:SEM"
       targetRoom = `edu:${tenantPrefix}${session.branch || 'any'}:${session.year || 'any'}:${session.semester || 'any'}`;
