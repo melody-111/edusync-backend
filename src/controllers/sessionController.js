@@ -55,6 +55,10 @@ const startSession = asyncHandler(async (req, res) => {
     }
   }
 
+  const isValidObjectId = (id) => id && typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/);
+  const resolvedClassroomId = isValidObjectId(classroomId) ? classroomId : null;
+  const resolvedClassName = className || (!isValidObjectId(classroomId) ? classroomId : null);
+
   const session = await Session.create({
     sessionId,
     roomId,
@@ -64,11 +68,11 @@ const startSession = asyncHandler(async (req, res) => {
     sessionType: 'class',
     title: title || (fileId ? 'Editing Session' : 'Untitled Session'),
     description: description || '',
-    classroomId: classroomId || null,
+    classroomId: resolvedClassroomId,
     branch: branch || null,
     year: year || null,
     semester: semester || null,
-    className: className || null,
+    className: resolvedClassName,
     section: section || null,
     folderId: folderId || null,
     fileId: fileId || null,

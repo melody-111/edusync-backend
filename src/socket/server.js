@@ -17,6 +17,47 @@ let _io = null;
 
 const getSocketServer = () => _io;
 
+// ─── School class/section normalizer ──────────────────────────────────────────
+// Accepts messy inputs like "11 /A", "Class 11-A", "Grade 11 A", "XI", "11" (+ section)
+// Returns { grade: '11', section: 'A' | null }
+const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12 };
+const parseSchoolClass = (className, section) => {
+  let raw = String(className || '').trim();
+  let grade = null;
+  let sec = section && String(section).trim() && String(section).trim().toLowerCase() !== 'null'
+    ? String(section).trim().toUpperCase()
+    : null;
+  if (!raw) return { grade: null, section: sec };
+  raw = raw.replace(/^(class|grade|std\.?|standard)\s*/i, '');
+  const num = raw.match(/^(\d{1,2})(?:st|nd|rd|th)?\s*[\/\-\s_]*\s*([A-Za-z])?\b/i);
+  if (num) {
+    grade = String(parseInt(num[1], 10));
+    if (!sec && num[2]) sec = num[2].toUpperCase();
+  } else {
+    const rom = raw.match(/^(xii|xi|x|ix|viii|vii|vi|v|iv|iii|ii|i)\b\s*[\/\-\s_]*\s*([A-Za-z])?\b/i);
+    if (rom) {
+      grade = String(ROMAN[rom[1].toLowerCase()]);
+      if (!sec && rom[2]) sec = rom[2].toUpperCase();
+    }
+  }
+  return { grade, section: sec };
+};
+
+const schoolRoomsForStudent = (tenantPrefix, className, section) => {
+  const { grade, section: sec } = parseSchoolClass(className, section);
+  if (!grade) return [];
+  const base = `school:${tenantPrefix}g:${grade}`;
+  return [`${base}:all`, sec ? `${base}:sec:${sec}` : `${base}:nosec`];
+};
+
+const schoolRoomsForTeacherTarget = (tenantPrefix, className, section) => {
+  const { grade, section: sec } = parseSchoolClass(className, section);
+  if (!grade) return [];
+  const base = `school:${tenantPrefix}g:${grade}`;
+  // Section-specific class also reaches students who never set a section
+  return sec ? [`${base}:sec:${sec}`, `${base}:nosec`] : [`${base}:all`];
+};
+
 // ─── Socket Auth Middleware ────────────────────────────────────────────────────
 const authenticateSocket = async (socket, next) => {
   try {
@@ -87,12 +128,25 @@ const validateRoomAccess = async (roomId, userId) => {
   const session = await Session.findOne({ roomId, status: 'active' }).lean();
   if (!session) return { valid: false, reason: 'Room not found or session ended' };
 
-  // Verify user is a participant
-  const participant = await SessionParticipant.findOne({
+  // Verify user is a participant; if not, enroll them automatically if session is active
+  let participant = await SessionParticipant.findOne({
     sessionId: session._id,
     userId,
   });
-  if (!participant) return { valid: false, reason: 'Not a participant of this session' };
+  if (!participant) {
+    try {
+      participant = await SessionParticipant.create({
+        sessionId: session._id,
+        userId,
+        role: 'student',
+        joinedAt: new Date(),
+        isConnected: true,
+      });
+      await Session.findByIdAndUpdate(session._id, { $inc: { participantCount: 1 } });
+    } catch (e) {
+      participant = await SessionParticipant.findOne({ sessionId: session._id, userId });
+    }
+  }
 
   return { valid: true, session, participant };
 };
@@ -202,6 +256,13 @@ const initSocketServer = async (httpServer) => {
           socket.join(`school:${tenantPrefix}Class ${user.className}:any`);
         }
 
+        // Canonical grade/section rooms (robust to "11 /A", "Class 11-A", etc.)
+        if (userRole === 'student') {
+          const canonical = schoolRoomsForStudent(tenantPrefix, user.className, user.section);
+          canonical.forEach(r => socket.join(r));
+          if (canonical.length) logger.debug(`student ${userId} joined canonical school rooms: ${canonical.join(', ')}`);
+        }
+
         if (userRole === 'teacher') {
           socket.to(compositeGroup).emit('teacher:online', {
             teacherId: userId,
@@ -246,8 +307,17 @@ const initSocketServer = async (httpServer) => {
           const payload = session.notificationPayload;
           let matches = false;
 
+          // Strict tenant isolation for cached sessions
+          if (payload.tenantId && String(payload.tenantId) !== String(user.college_id || '')) {
+            return;
+          }
+
           if (payload.classroomId && studentClassroomId) {
             matches = payload.classroomId === studentClassroomId;
+          } else if (payload.schoolGrade) {
+            const st = parseSchoolClass(user.className, user.section);
+            matches = !!st.grade && st.grade === payload.schoolGrade &&
+              (!payload.schoolSection || !st.section || payload.schoolSection === st.section);
           } else if (payload.branch && payload.year && payload.semester) {
             const branchMatch = !payload.branch || payload.branch === studentBranch;
             const yearMatch = !payload.year || payload.year === studentYear;
@@ -413,7 +483,7 @@ const initSocketServer = async (httpServer) => {
     // ─── Teacher → Students: draw / drawData (Fabric JSON) ────────────────────
     const handleDraw = async (payload) => {
       if (userRole !== 'teacher') return;
-      const roomId = socket.currentRoomId;
+      const roomId = socket.currentRoomId || payload?.roomId || [...socket.rooms].find(r => r.startsWith('room_'));
       if (!roomId) return;
 
       // Buffer stroke for batch DB write (fire-and-forget)
@@ -433,7 +503,7 @@ const initSocketServer = async (httpServer) => {
     socket.on('drawData', handleDraw);
     socket.on('drawing', (payload) => {
       if (userRole !== 'teacher') return;
-      const roomId = socket.currentRoomId;
+      const roomId = socket.currentRoomId || payload?.roomId || [...socket.rooms].find(r => r.startsWith('room_'));
       if (!roomId) return;
       socket.to(roomId).emit('drawing', payload);
     });
@@ -642,11 +712,20 @@ const initSocketServer = async (httpServer) => {
       const teacherName = user.name || 'Your Teacher';
       const subject = payload.subject || 'Live Class';
 
+      const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
+      const isSchoolTarget = payload.targetType === 'school' || (!!payload.classroomId && !payload.branch);
+      const schoolTarget = isSchoolTarget
+        ? parseSchoolClass(payload.className || payload.classroomId, payload.section)
+        : { grade: null, section: null };
+
       const notificationPayload = {
         ...payload,
         from: userId,
         teacherName,
         subject,
+        tenantId: user.college_id ? String(user.college_id) : null,
+        schoolGrade: schoolTarget.grade,
+        schoolSection: schoolTarget.section,
         startTime: new Date(),
         ts: Date.now()
       };
@@ -654,8 +733,11 @@ const initSocketServer = async (httpServer) => {
       // 1. Target specific rooms based on teacher's payload
       const targetRooms = new Set();
       if (payload.roomId) targetRooms.add(payload.roomId);
-      
-      const tenantPrefix = user.college_id ? `${user.college_id}:` : '';
+
+      if (isSchoolTarget && schoolTarget.grade) {
+        schoolRoomsForTeacherTarget(tenantPrefix, payload.className || payload.classroomId, payload.section)
+          .forEach(r => targetRooms.add(r));
+      }
 
       if (payload.classroomId) {
         targetRooms.add(`classroom:${tenantPrefix}${payload.classroomId}`);
@@ -669,9 +751,13 @@ const initSocketServer = async (httpServer) => {
         }
       }
 
+      // Single multi-room emit → socket.io de-duplicates, so a student in several
+      // matching rooms gets exactly one alert.
+      if (targetRooms.size > 0) {
+        console.log(`[SOCKET] Emitting class:started to rooms: ${Array.from(targetRooms).join(' | ')}`);
+        _io.to(Array.from(targetRooms)).emit('class:started', notificationPayload);
+      }
       targetRooms.forEach(room => {
-        console.log(`[SOCKET] Emitting class:started to target room: ${room}`);
-        _io.to(room).emit('class:started', notificationPayload);
         // Cache this live session so late-joining students can receive it
         _liveSessions.set(room, {
           notificationPayload,
@@ -694,7 +780,9 @@ const initSocketServer = async (httpServer) => {
           query.college_id = user.college_id;
         }
 
-        if (payload.classroomId) {
+        if (isSchoolTarget && schoolTarget.grade) {
+          query.className = { $regex: new RegExp(`^\\s*(class|grade)?\\s*${schoolTarget.grade}(\\b|\\D)`, 'i') };
+        } else if (payload.classroomId) {
           query.classroomId = payload.classroomId;
         } else if (payload.branch) {
           query.branch = payload.branch;
