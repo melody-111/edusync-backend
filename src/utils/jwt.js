@@ -4,6 +4,9 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_dev_secret';
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'fallback_dev_secret')) {
+  throw new Error('[FATAL SECURITY] In production, JWT_SECRET must be set to a strong secret in environment variables!');
+}
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'fallback_refresh_secret';
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '30d';

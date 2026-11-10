@@ -25,9 +25,9 @@ const buildTransporter = () => {
       user: (process.env.SMTP_USER || '').trim(),
       pass: (process.env.SMTP_PASS || '').trim(),
     },
-    connectionTimeout: 20000,
-    greetingTimeout:   20000,
-    socketTimeout:     20000,
+    connectionTimeout: process.env.NODE_ENV === 'production' ? 10000 : 2500,
+    greetingTimeout:   process.env.NODE_ENV === 'production' ? 10000 : 2500,
+    socketTimeout:     process.env.NODE_ENV === 'production' ? 10000 : 2500,
     tls: { rejectUnauthorized: false },
   });
 };
@@ -57,6 +57,8 @@ const sendViaSendGrid = async ({ to, subject, html, text }) => {
   return { messageId: `sg-${response.headers['x-message-id'] || Date.now()}`, provider: 'sendgrid' };
 };
 
+let sendGridDisabled = false;
+
 /* ─────────────────────────────────────────────────────────── */
 /*  Universal Sender: SMTP → SendGrid fallback                  */
 /* ─────────────────────────────────────────────────────────── */
@@ -70,15 +72,20 @@ const sendUniversalEmail = async ({ to, subject, html, text }) => {
 
   logger.info(`[Email] Sending to ${to}`);
 
-  // ── 1. Try SendGrid (Primary for Production like Render)
-  if (process.env.SENDGRID_API_KEY) {
+  // ── 1. Try SendGrid (Primary for Production like Render, if authorized)
+  if (process.env.SENDGRID_API_KEY && !sendGridDisabled) {
     try {
       logger.info(`[Email] Attempting to send via SendGrid...`);
       const info = await sendViaSendGrid({ to, subject, html, text });
       logger.info(`[Email] ✅ SendGrid sent! MessageId: ${info.messageId}`);
       return info;
     } catch (sgErr) {
-      logger.warn(`[Email] SendGrid failed: ${sgErr.message}. Falling back to SMTP...`);
+      if (sgErr.code === 401 || (sgErr.message && sgErr.message.includes('Unauthorized'))) {
+        sendGridDisabled = true;
+        logger.warn(`[Email] SendGrid unauthorized. Switching exclusively to Gmail SMTP.`);
+      } else {
+        logger.warn(`[Email] SendGrid failed: ${sgErr.message}. Falling back to SMTP...`);
+      }
     }
   }
 
@@ -86,8 +93,9 @@ const sendUniversalEmail = async ({ to, subject, html, text }) => {
   try {
     const smtp = getTransporter();
     const sendPromise    = smtp.sendMail({ from, to, subject, html, text });
+    const smtpTimeout    = 3000;
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP timed out after 20s')), 20000)
+      setTimeout(() => reject(new Error(`SMTP timed out after ${smtpTimeout}ms`)), smtpTimeout)
     );
     const info = await Promise.race([sendPromise, timeoutPromise]);
     logger.info(`[Email] ✅ SMTP sent! MessageId: ${info.messageId}`);
@@ -100,11 +108,15 @@ const sendUniversalEmail = async ({ to, subject, html, text }) => {
   throw new Error(`Email delivery failed: SendGrid and SMTP both failed.`);
 };
 
+const { escapeHtml } = require('./helpers');
+
 /* ─────────────────────────────────────────────────────────── */
 /*  OTP Email — EduSync branded                                 */
 /* ─────────────────────────────────────────────────────────── */
 
 const sendOtpEmail = async (to, otp, name = 'User') => {
+  const safeName = escapeHtml(name);
+  const safeOtp = escapeHtml(String(otp));
   const html = `
     <!DOCTYPE html>
     <html>
@@ -126,13 +138,13 @@ const sendOtpEmail = async (to, otp, name = 'User') => {
               </tr>
               <tr>
                 <td style="padding:40px;">
-                  <p style="color:#1a1a2e;font-size:16px;margin:0 0 8px;font-weight:600;">Hi ${name} 👋</p>
+                  <p style="color:#1a1a2e;font-size:16px;margin:0 0 8px;font-weight:600;">Hi ${safeName} 👋</p>
                   <p style="color:#555;font-size:15px;margin:0 0 24px;line-height:1.6;">
                     Your one-time verification code for EduSync is:
                   </p>
                   <div style="background:#f0f2ff;border:2px dashed #6c63ff;border-radius:12px;padding:28px;text-align:center;margin:0 0 28px;">
                     <div style="font-size:42px;font-weight:900;letter-spacing:14px;color:#1a1a2e;font-family:'Courier New',monospace;">
-                      ${otp}
+                      ${safeOtp}
                     </div>
                     <p style="color:#888;font-size:12px;margin:12px 0 0;">Valid for <strong>5 minutes</strong></p>
                   </div>
@@ -156,13 +168,15 @@ const sendOtpEmail = async (to, otp, name = 'User') => {
 
   const info = await sendUniversalEmail({
     to,
-    subject: `${otp} is your EduSync verification code`,
+    subject: `${safeOtp} is your EduSync verification code`,
     html,
-    text: `Your EduSync OTP is: ${otp}\n\nValid for 5 minutes. Do not share with anyone.`,
+    text: `Your EduSync OTP is: ${safeOtp}\n\nValid for 5 minutes. Do not share with anyone.`,
   });
 
   logger.info(`[Email] OTP sent to ${to} via ${info.provider} — MessageId: ${info.messageId}`);
-  logger.info(`[DEBUG] OTP for ${to} is: ${otp}`);
+  if (process.env.NODE_ENV !== 'production') {
+    logger.info(`[DEBUG] OTP for ${to} is: ${safeOtp}`);
+  }
   return info;
 };
 
@@ -171,6 +185,9 @@ const sendOtpEmail = async (to, otp, name = 'User') => {
 /* ─────────────────────────────────────────────────────────── */
 
 const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl }) => {
+  const safeName = escapeHtml(name);
+  const safeTitle = escapeHtml(sessionTitle);
+  const safeUrl = escapeHtml(pdfUrl);
   const html = `
     <!DOCTYPE html>
     <html>
@@ -185,13 +202,13 @@ const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl }) => {
             </tr>
             <tr>
               <td style="padding:40px;">
-                <p style="color:#1a1a2e;font-size:16px;font-weight:600;margin:0 0 12px;">Hi ${name} 👋</p>
+                <p style="color:#1a1a2e;font-size:16px;font-weight:600;margin:0 0 12px;">Hi ${safeName} 👋</p>
                 <p style="color:#555;font-size:15px;line-height:1.6;margin:0 0 24px;">
-                  Your notes for <strong>${sessionTitle}</strong> are ready!
+                  Your notes for <strong>${safeTitle}</strong> are ready!
                 </p>
-                ${pdfUrl ? `
+                ${safeUrl ? `
                   <div style="text-align:center;margin:24px 0;">
-                    <a href="${pdfUrl}" style="background:#6c63ff;color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+                    <a href="${safeUrl}" style="background:#6c63ff;color:#fff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
                       📥 Download PDF
                     </a>
                   </div>
@@ -207,9 +224,9 @@ const sendNotesEmail = async ({ to, name, sessionTitle, pdfUrl }) => {
 
   return sendUniversalEmail({
     to,
-    subject: `📚 Class Notes: ${sessionTitle}`,
+    subject: `📚 Class Notes: ${safeTitle}`,
     html,
-    text: `Your notes for ${sessionTitle} are ready. Download: ${pdfUrl || 'N/A'}`,
+    text: `Your notes for ${safeTitle} are ready. Download: ${pdfUrl || 'N/A'}`,
   });
 };
 

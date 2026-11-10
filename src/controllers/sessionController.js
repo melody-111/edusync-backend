@@ -42,7 +42,8 @@ const startSession = asyncHandler(async (req, res) => {
   }
 
   const sessionId = uuidv4();
-  const roomId = `room_${uuidv4()}`;
+  const cleanDesk = teacher.deskId ? teacher.deskId.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/^room_/, '').replace(/^tch_/, '') : null;
+  const roomId = cleanDesk ? `room_tch_${cleanDesk}` : `room_${uuidv4()}`;
   const { qrToken, qrCodeDataUrl, qrPayload } = await generateSessionQR(sessionId);
 
 
@@ -59,12 +60,17 @@ const startSession = asyncHandler(async (req, res) => {
   const resolvedClassroomId = isValidObjectId(classroomId) ? classroomId : null;
   const resolvedClassName = className || (!isValidObjectId(classroomId) ? classroomId : null);
 
+  const isBroadcastingSession = req.body.isBroadcasting === true || req.body.isBroadcasting === 'true';
+
   const session = await Session.create({
     sessionId,
     roomId,
     teacherId: teacher._id,
     ownerId: teacher._id,
     college_id: teacher.college_id || undefined,
+    institutionName: teacher.institutionName || undefined,
+    institutionType: teacher.institutionType || (resolvedClassName || classroomId ? 'school' : 'university'),
+    isBroadcasting: isBroadcastingSession,
     sessionType: 'class',
     title: title || (fileId ? 'Editing Session' : 'Untitled Session'),
     description: description || '',
@@ -129,12 +135,19 @@ const startSession = asyncHandler(async (req, res) => {
     details: { title: session.title, roomId },
   });
 
-  // Notify connected students in the specific classroom that a class has started
+  // Notify connected students in the specific classroom that a class has started ONLY if explicitly broadcasting
   const io = getSocketServer();
-  if (io) {
+  if (io && isBroadcastingSession) {
     // Determine the target broadcast room
     let targetRoom = null;
-    const tenantPrefix = teacher.college_id ? `${teacher.college_id}:` : '';
+    let tenantPrefix = '';
+    if (teacher.college_id) {
+      tenantPrefix = `${teacher.college_id}:`;
+    } else if (teacher.institutionName) {
+      const sanitized = teacher.institutionName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+      tenantPrefix = `inst_${sanitized}:`;
+    }
+
     if (session.className && session.section) {
       targetRoom = `school:${tenantPrefix}${session.className}:${session.section}`;
     } else if (session.classroomId) {
@@ -151,33 +164,40 @@ const startSession = asyncHandler(async (req, res) => {
       sessionId,
       roomId,
       teacherName: teacher.name,
-      teacherDeskId: teacher.deskId,
+      teacherDeskId: teacher.deskId || teacher.teacherCode,
       title: session.title,
+      subject: session.title || session.className || session.branch || 'Live Class',
+      className: session.className,
+      section: session.section,
       branch: session.branch,
       year: session.year,
-      semester: session.semester
+      semester: session.semester,
+      institutionName: teacher.institutionName,
+      institutionType: teacher.institutionType || (session.className ? 'school' : 'university'),
+      college_id: teacher.college_id ? teacher.college_id.toString() : null,
+      tenantId: teacher.college_id ? teacher.college_id.toString() : (teacher.institutionName ? teacher.institutionName.trim().toLowerCase() : null),
+      isBroadcasting: true,
+      ts: Date.now()
     };
 
     if (targetRoom) {
       io.to(targetRoom).emit('class:started', broadcastData);
       logger.info(`Class start broadcasted to ${targetRoom}`);
-    } else {
-      io.emit('class:started', broadcastData);
     }
   }
 
-  // Trigger push notifications for targeted students
-  if (teacher.college_id) {
+  // Trigger push notifications for targeted students (only if broadcasting)
+  if (isBroadcastingSession && teacher.college_id) {
     // Run asynchronously to avoid blocking the response
     (async () => {
       try {
         const User = require('../models/User');
         const Device = require('../models/Device');
         const { sendPushNotification } = require('../utils/push');
-        
+
         // Build query dynamically based on what teacher provided
         const query = { role: 'student', college_id: teacher.college_id, isActive: true };
-        
+
         let hasFilters = false;
         if (session.branch || session.year || session.semester) {
           if (session.branch) query.branch = session.branch;
@@ -185,16 +205,16 @@ const startSession = asyncHandler(async (req, res) => {
           if (session.semester) query.semester = session.semester;
           hasFilters = true;
         }
-        
+
         if (session.className || session.section) {
           if (session.className) query.className = session.className;
           if (session.section) query.section = session.section;
           hasFilters = true;
         }
-        
+
         if (session.subject) {
-           query.subjectName = session.subject; // Strict match if subject is provided
-           hasFilters = true;
+          query.subjectName = session.subject; // Strict match if subject is provided
+          hasFilters = true;
         }
 
         // Only send if we actually have some filters (don't spam the whole college)
@@ -204,7 +224,7 @@ const startSession = asyncHandler(async (req, res) => {
 
           if (targetStudents.length > 0) {
             const studentIds = targetStudents.map(s => s._id);
-            
+
             // Get all active push tokens for these students
             const devices = await Device.find({
               userId: { $in: studentIds },
@@ -213,12 +233,12 @@ const startSession = asyncHandler(async (req, res) => {
             }).select('fcmToken').lean();
 
             const tokens = devices.map(d => d.fcmToken);
-            
+
             if (tokens.length > 0) {
-              const label = session.className 
-                ? `${session.className} ${session.section || ''}` 
+              const label = session.className
+                ? `${session.className} ${session.section || ''}`
                 : `${session.branch || ''} ${session.year || ''} ${session.semester || ''}`;
-                
+
               await sendPushNotification(
                 tokens,
                 'Your Teacher is Live! 🔴',
@@ -346,14 +366,14 @@ const startSelfSession = asyncHandler(async (req, res) => {
  */
 const getActiveSessionsForClassroom = asyncHandler(async (req, res) => {
   const { classroomId } = req.params;
-  
-  const sessions = await Session.find({ 
-    classroomId, 
-    status: 'active' 
+
+  const sessions = await Session.find({
+    classroomId,
+    status: 'active'
   })
-  .populate('teacherId', 'name avatar deskId')
-  .sort({ startedAt: -1 })
-  .lean();
+    .populate('teacherId', 'name avatar deskId')
+    .sort({ startedAt: -1 })
+    .lean();
 
   return sendSuccess(res, { sessions }, 'Active sessions retrieved');
 });
@@ -412,17 +432,17 @@ const joinSessionDirect = asyncHandler(async (req, res) => {
  */
 const getActiveSessionsByDeskId = asyncHandler(async (req, res) => {
   const { deskId } = req.params;
-  
+
   const teacher = await require('../models/User').findOne({ deskId, role: 'teacher' });
   if (!teacher) return sendError(res, 'Teacher not found', 404);
 
-  const sessions = await Session.find({ 
-    teacherId: teacher._id, 
-    status: 'active' 
+  const sessions = await Session.find({
+    teacherId: teacher._id,
+    status: 'active'
   })
-  .populate('teacherId', 'name avatar deskId')
-  .sort({ startedAt: -1 })
-  .lean();
+    .populate('teacherId', 'name avatar deskId')
+    .sort({ startedAt: -1 })
+    .lean();
 
   return sendSuccess(res, { sessions }, 'Active sessions retrieved for Desk ID');
 });
@@ -504,11 +524,11 @@ const joinSession = asyncHandler(async (req, res) => {
     sessionTitle: session.title,
     controls: controls
       ? {
-          keyboardEnabled: controls.keyboardEnabled,
-          copyPasteEnabled: controls.copyPasteEnabled,
-          aiEnabled: controls.aiEnabled,
-          youtubeEnabled: controls.youtubeEnabled,
-        }
+        keyboardEnabled: controls.keyboardEnabled,
+        copyPasteEnabled: controls.copyPasteEnabled,
+        aiEnabled: controls.aiEnabled,
+        youtubeEnabled: controls.youtubeEnabled,
+      }
       : session.appControls,
     media: media ? {
       mediaUrl: media.mediaUrl,
@@ -604,11 +624,11 @@ const endSession = asyncHandler(async (req, res) => {
 
   // Trigger background PDF generation
   if (canvasData) {
-    addPdfJob({ 
-      sessionId: session._id, 
-      canvasData, 
-      ownerId: user._id, 
-      title: session.title 
+    addPdfJob({
+      sessionId: session._id,
+      canvasData,
+      ownerId: user._id,
+      title: session.title
     }).catch(err => logger.error(`Failed to enqueue background PDF: ${err}`));
   }
 
@@ -719,12 +739,14 @@ const updateControls = asyncHandler(async (req, res) => {
   await controls.save();
 
   // Also update session snapshot
-  await Session.findByIdAndUpdate(session._id, { appControls: {
-    keyboardEnabled: controls.keyboardEnabled,
-    copyPasteEnabled: controls.copyPasteEnabled,
-    aiEnabled: controls.aiEnabled,
-    youtubeEnabled: controls.youtubeEnabled,
-  }});
+  await Session.findByIdAndUpdate(session._id, {
+    appControls: {
+      keyboardEnabled: controls.keyboardEnabled,
+      copyPasteEnabled: controls.copyPasteEnabled,
+      aiEnabled: controls.aiEnabled,
+      youtubeEnabled: controls.youtubeEnabled,
+    }
+  });
 
   // Broadcast control update to room
   const io = getSocketServer();
@@ -746,12 +768,14 @@ const updateControls = asyncHandler(async (req, res) => {
     details: { changes: req.body },
   });
 
-  return sendSuccess(res, { controls: {
-    keyboardEnabled: controls.keyboardEnabled,
-    copyPasteEnabled: controls.copyPasteEnabled,
-    aiEnabled: controls.aiEnabled,
-    youtubeEnabled: controls.youtubeEnabled,
-  }}, 'Controls updated and broadcast to room');
+  return sendSuccess(res, {
+    controls: {
+      keyboardEnabled: controls.keyboardEnabled,
+      copyPasteEnabled: controls.copyPasteEnabled,
+      aiEnabled: controls.aiEnabled,
+      youtubeEnabled: controls.youtubeEnabled,
+    }
+  }, 'Controls updated and broadcast to room');
 });
 
 // ─── Set Session Media (Teacher Only) ────────────────────────────────────────
@@ -849,13 +873,13 @@ const saveSessionProgress = asyncHandler(async (req, res) => {
   const user = req.user;
   const mongoose = require('mongoose');
 
-  const session = await Session.findOne({ 
+  const session = await Session.findOne({
     $or: [
-      { _id: mongoose.isValidObjectId(sessionId) ? sessionId : null }, 
+      { _id: mongoose.isValidObjectId(sessionId) ? sessionId : null },
       { sessionId: sessionId }
     ]
   });
-  
+
   if (!session) return sendError(res, 'Session not found', 404);
 
   // Allow owner OR participant to save
@@ -864,7 +888,7 @@ const saveSessionProgress = asyncHandler(async (req, res) => {
     const isParticipant = await SessionParticipant.findOne({ sessionId: session._id, userId: user._id });
     if (!isParticipant) return sendError(res, 'Access denied', 403);
   }
-  
+
   if (!session) {
     return sendError(res, 'Session not found', 404);
   }
@@ -890,11 +914,11 @@ const saveSessionProgress = asyncHandler(async (req, res) => {
     }
 
     // Trigger PDF generation job
-    addPdfJob({ 
-      sessionId: session._id, 
-      canvasData, 
-      ownerId: user._id, 
-      title: session.title 
+    addPdfJob({
+      sessionId: session._id,
+      canvasData,
+      ownerId: user._id,
+      title: session.title
     }).catch(err => logger.error(`Failed to enqueue manual PDF save: ${err}`));
   }
 
@@ -938,17 +962,164 @@ const sessionIdIdParamValidation = [
 // Join teacher's live class by teacher ID
 const joinTeacherClass = asyncHandler(async (req, res) => {
   const { teacherId } = req.params;
-  const userId = req.user._id;
+  const student = req.user;
+  const userId = student._id;
 
-  // Find teacher's active session
+  const trimmed = String(teacherId || '').trim();
+  const isObjectId = /^[0-9a-fA-F]{24}$/.test(trimmed);
+
+  // Find teacher's active session by teacherId, deskId, or roomId/sessionId
   const Session = require('../models/Session');
-  const activeSession = await Session.findOne({
-    teacherId,
-    status: 'active'
-  });
+  const User = require('../models/User');
+  const { getTeacherActiveLiveSession } = require('../socket/server');
+
+  let activeSession = null;
+  let teacherUser = null;
+
+  if (isObjectId) {
+    teacherUser = await User.findById(trimmed).lean();
+    if (!teacherUser) {
+      activeSession = await Session.findById(trimmed);
+      if (activeSession) {
+        teacherUser = await User.findById(activeSession.teacherId).lean();
+      }
+    }
+  }
+
+  if (!teacherUser) {
+    teacherUser = await User.findOne({
+      $or: [
+        { deskId: { $regex: new RegExp(`^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+        { teacherCode: { $regex: new RegExp(`^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } }
+      ],
+      role: 'teacher'
+    }).lean();
+  }
+
+  if (!teacherUser && !activeSession) {
+    activeSession = await Session.findOne({
+      $or: [
+        { roomId: trimmed, status: 'active' },
+        { sessionId: trimmed, status: 'active' }
+      ]
+    }).sort({ startedAt: -1 });
+    if (activeSession) {
+      teacherUser = await User.findById(activeSession.teacherId).lean();
+    }
+  }
+
+  if (teacherUser && !activeSession) {
+    activeSession = await Session.findOne({ teacherId: teacherUser._id, status: 'active' }).sort({ startedAt: -1 });
+  }
+
+  // ─── Socket Live Room Resolver (Zero-Mismatch Sync) ─────────────────────
+  // If teacher is broadcasting on live socket, guarantee roomId matches live socket room!
+  const liveSocketData = getTeacherActiveLiveSession(teacherUser?._id || trimmed) 
+    || getTeacherActiveLiveSession(teacherUser?.deskId || trimmed)
+    || getTeacherActiveLiveSession(activeSession?.roomId);
+
+  if (liveSocketData && liveSocketData.roomId) {
+    if (activeSession) {
+      await Session.findByIdAndUpdate(activeSession._id, {
+        roomId: liveSocketData.roomId,
+        isBroadcasting: true
+      }).catch(() => {});
+      activeSession.roomId = liveSocketData.roomId;
+      activeSession.isBroadcasting = true;
+    } else if (teacherUser) {
+      const crypto = require('crypto');
+      activeSession = await Session.create({
+        sessionId: liveSocketData.sessionId || `session_${Date.now()}`,
+        roomId: liveSocketData.roomId,
+        qrToken: crypto.randomBytes(16).toString('hex'),
+        teacherId: teacherUser._id,
+        ownerId: teacherUser._id,
+        college_id: teacherUser.college_id,
+        institutionName: teacherUser.institutionName,
+        institutionType: teacherUser.institutionType || (teacherUser.className ? 'school' : 'university'),
+        className: liveSocketData.notificationPayload?.className || teacherUser.className,
+        section: liveSocketData.notificationPayload?.section || teacherUser.section,
+        branch: liveSocketData.notificationPayload?.branch || teacherUser.branch,
+        semester: liveSocketData.notificationPayload?.semester || teacherUser.semester,
+        year: liveSocketData.notificationPayload?.year || teacherUser.year,
+        isBroadcasting: true,
+        sessionType: 'class',
+        title: liveSocketData.notificationPayload?.subject || 'Live Class',
+        status: 'active',
+        startedAt: new Date(),
+      }).catch(() => null);
+    }
+  }
 
   if (!activeSession) {
-    return sendError(res, 'Teacher is not currently live', 404);
+    return sendError(res, 'Teacher is not currently in an active live session', 404);
+  }
+
+  if (!teacherUser) {
+    teacherUser = await User.findById(activeSession.teacherId).lean();
+  }
+
+  // ─── Verify Academic Profile: College, Class, Section, Branch ───────────
+  // 1. College / Institution match
+  const tInst = (activeSession.institutionName || teacherUser?.institutionName || '').toLowerCase().trim();
+  const sInst = (student.institutionName || '').toLowerCase().trim();
+  const tCollege = activeSession.college_id ? String(activeSession.college_id) : (teacherUser?.college_id ? String(teacherUser.college_id) : null);
+  const sCollege = student.college_id ? String(student.college_id) : null;
+
+  if (tCollege && sCollege) {
+    if (tCollege !== sCollege) {
+      return sendError(res, 'Failed to join: You belong to a different college or school.', 403);
+    }
+  } else if (tInst) {
+    if (!sInst || sInst !== tInst) {
+      return sendError(res, `Failed to join: Session is for "${activeSession.institutionName || teacherUser?.institutionName}", but your profile has "${student.institutionName || 'no institution'}".`, 403);
+    }
+  }
+
+  // 2. Mode match (School vs College / University)
+  const tMode = (activeSession.institutionType || teacherUser?.institutionType || (activeSession.className ? 'school' : 'university')).toLowerCase();
+  const sMode = (student.institutionType || (student.className ? 'school' : 'university')).toLowerCase();
+  if (tMode !== sMode) {
+    return sendError(res, `Failed to join: Mode mismatch (${tMode === 'school' ? 'School' : 'College'} vs ${sMode === 'school' ? 'School' : 'College'}).`, 403);
+  }
+
+  // 3. Class / Grade match (School)
+  const targetGrade = activeSession.className || teacherUser?.className;
+  if (targetGrade) {
+    const normalize = s => s ? s.toString().toLowerCase().replace(/^(class|grade|std\.?)\s*/i, '').replace(/[^a-z0-9]/g, '') : '';
+    if (!student.className || normalize(targetGrade) !== normalize(student.className)) {
+      return sendError(res, `Failed to join: This session is for Class ${targetGrade}, but your enrolled class is ${student.className || 'not set'}.`, 403);
+    }
+  }
+
+  // 4. Section match (School)
+  const targetSection = activeSession.section || teacherUser?.section;
+  if (targetSection) {
+    const sSec = (student.section || '').trim().toUpperCase();
+    const tSec = targetSection.trim().toUpperCase();
+    if (!sSec || sSec !== tSec) {
+      return sendError(res, `Failed to join: This session is for Section ${tSec}, but your section is ${sSec || 'not set'}.`, 403);
+    }
+  }
+
+  // 5. Branch match (University)
+  const targetBranch = activeSession.branch || teacherUser?.branch;
+  if (targetBranch && targetBranch.toLowerCase() !== 'any') {
+    const sBranch = (student.branch || '').toLowerCase().trim();
+    const tBranch = targetBranch.toLowerCase().trim();
+    if (!sBranch || sBranch !== tBranch) {
+      return sendError(res, `Failed to join: This session is for ${targetBranch} branch, but your branch is ${student.branch || 'not set'}.`, 403);
+    }
+  }
+
+  // 6. Semester match (University)
+  const targetSemester = activeSession.semester || teacherUser?.semester;
+  if (targetSemester && String(targetSemester).toLowerCase() !== 'any') {
+    const sSem = String(student.semester || '').trim();
+    const tSem = String(targetSemester).trim();
+    if (!sSem || sSem !== tSem) {
+      return sendError(res, `Failed to join: This session is for Semester ${tSem}, but your semester is ${student.semester || 'not set'}.`, 403);
+    }
   }
 
   // Check if student already joined
@@ -958,10 +1129,19 @@ const joinTeacherClass = asyncHandler(async (req, res) => {
     userId
   });
 
+  let cachedCanvas = null;
+  try {
+    const { getRoomCanvas } = require('../socket/server');
+    if (typeof getRoomCanvas === 'function') {
+      cachedCanvas = await getRoomCanvas(activeSession.roomId);
+    }
+  } catch (e) {}
+
   if (existingParticipant) {
     return sendSuccess(res, {
       sessionId: activeSession.sessionId,
-      roomId: activeSession.roomId
+      roomId: activeSession.roomId,
+      canvasData: cachedCanvas
     }, 'Already joined this session');
   }
 
@@ -969,14 +1149,78 @@ const joinTeacherClass = asyncHandler(async (req, res) => {
   await SessionParticipant.create({
     sessionId: activeSession._id,
     userId,
+    role: 'student',
     joinedAt: new Date(),
     isConnected: true
   });
 
   return sendSuccess(res, {
     sessionId: activeSession.sessionId,
-    roomId: activeSession.roomId
+    roomId: activeSession.roomId,
+    canvasData: cachedCanvas
   }, 'Successfully joined teacher class');
+});
+
+/**
+ * POST /session/alert-upcoming
+ * Teacher sends an "Upcoming Class Soon" alert to target students
+ */
+const alertUpcomingClass = asyncHandler(async (req, res) => {
+  const teacher = req.user;
+  const { subject, targetType, className, section, branch, year, semester, message } = req.body;
+
+  const { getSocketServer } = require('../socket/server');
+  const io = getSocketServer();
+  if (!io) return sendError(res, 'Socket server not ready', 500);
+
+  const teacherName = teacher.name || 'Your Teacher';
+  const sub = subject || teacher.subjectName || teacher.subject || 'Upcoming Class';
+  const tenantPrefix = teacher.college_id ? `${teacher.college_id}:` : (teacher.institutionName ? `${teacher.institutionName.trim().toLowerCase()}:` : '');
+
+  const isSchoolTarget = targetType === 'school' || (!!className && !branch) || teacher.institutionType === 'school';
+  const targetGrade = className || teacher.className;
+  const targetSection = section || teacher.section;
+
+  const alertPayload = {
+    teacherId: teacher._id.toString(),
+    teacherName,
+    subject: sub,
+    institutionName: teacher.institutionName,
+    institutionType: teacher.institutionType || (isSchoolTarget ? 'school' : 'university'),
+    college_id: teacher.college_id ? String(teacher.college_id) : null,
+    className: targetGrade,
+    section: targetSection,
+    branch: branch || teacher.branch,
+    year: year || teacher.year,
+    semester: semester || teacher.semester,
+    deskId: teacher.deskId || teacher.teacherCode,
+    isUpcoming: true,
+    message: message || `Upcoming class soon: ${teacherName} has scheduled a ${sub} class. Please get ready!`,
+    ts: Date.now()
+  };
+
+  const targetRooms = new Set();
+  if (isSchoolTarget && targetGrade) {
+    targetRooms.add(`classroom:${tenantPrefix}${targetGrade}`);
+    targetRooms.add(`classroom:${tenantPrefix}Class ${targetGrade}`);
+    targetRooms.add(`school:${tenantPrefix}${targetGrade}:any`);
+    if (targetSection) {
+      targetRooms.add(`school:${tenantPrefix}${targetGrade}:${targetSection}`);
+    }
+  } else if (branch || teacher.branch) {
+    const b = branch || teacher.branch;
+    const y = year || teacher.year || 'any';
+    const s = semester || teacher.semester || 'any';
+    targetRooms.add(`edu:${tenantPrefix}${b}:${y}:${s}`);
+    targetRooms.add(`edu:${tenantPrefix}${b}:any:any`);
+  }
+
+  if (targetRooms.size > 0) {
+    io.to(Array.from(targetRooms)).emit('class:upcoming:alert', alertPayload);
+    io.to(Array.from(targetRooms)).emit('teacher:online', alertPayload);
+  }
+
+  return sendSuccess(res, { alertSent: true, targetRooms: Array.from(targetRooms) }, 'Upcoming class alert sent successfully to students');
 });
 
 /**
@@ -1031,7 +1275,8 @@ module.exports = {
   getSessionMedia,
   saveSessionProgress,
   refreshQR,
-  
+  alertUpcomingClass,
+
   // Validations
   startSessionValidation,
   joinSessionValidation,

@@ -15,9 +15,9 @@ const authenticate = async (req, res, next) => {
   try {
     // ─── Admin Key Bypass for Server / Website Calls ─────────────────────────
     const apiKey = req.headers['x-api-key'] || req.headers['x-admin-secret'];
-    const adminSecret = process.env.ADMIN_SECRET || 'EDUSYNC_ADMIN_2024';
+    const adminSecret = process.env.ADMIN_SECRET;
     const authHeader = req.headers.authorization;
-    if (apiKey === adminSecret || (authHeader && (authHeader === `Bearer ${adminSecret}` || authHeader === adminSecret))) {
+    if (adminSecret && (apiKey === adminSecret || (authHeader && (authHeader === `Bearer ${adminSecret}` || authHeader === adminSecret)))) {
        req.user = { 
           _id: 'admin_101', 
           name: 'EduSync Admin', 

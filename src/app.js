@@ -21,6 +21,7 @@ const {
 const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 const hpp = require('hpp');
+const { sstiGuard } = require('./middleware/sstiSanitizer');
 const setupSwagger = require('./config/swagger');
 
 const logger = require('./utils/logger');
@@ -40,6 +41,7 @@ const adminRoutes = require('./routes/admin');
 const folderRoutes = require('./routes/folders');
 const freeStudyRoutes = require('./routes/freeStudy'); // 🆕 Free Study Mode
 const youtubeRoutes = require('./routes/youtube'); // 🆕 YouTube Search
+const examRoutes = require('./routes/exams'); // 🆕 Exam Mode
 
 const createApp = () => {
   const app = express();
@@ -92,13 +94,21 @@ const createApp = () => {
   // ─── General Rate Limiting ───────────────────────────────────────────────────
   app.use(generalLimiter);
 
-  // ─── Body Parsing ────────────────────────────────────────────────────────────
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // ─── Body Parsing & LPDoS Mitigation ─────────────────────────────────────────
+  // Specific routes that require higher payloads for whiteboard strokes / attachments
+  app.use('/user/notes', express.json({ limit: '25mb' }));
+  app.use('/files', express.json({ limit: '25mb' }));
+
+  // Global strict body limit to prevent Memory Exhaustion & LPDoS
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
   // ─── Data Sanitization & Input Validation ────────────────────────────────────
-  // Protect against NoSQL Injection
-  app.use(mongoSanitize());
+  // Protect against NoSQL Injection (recursively cleans prohibited keys)
+  app.use(mongoSanitize({ replaceWith: '_' }));
+
+  // Protect against Server Side Template Injection (SSTI) & Code Injection
+  app.use(sstiGuard);
 
   // Protect against XSS
   app.use(xss());
@@ -165,48 +175,64 @@ const createApp = () => {
   // ─── API Routes ───────────────────────────────────────────────────────────────
   // Auth routes (individual routes have specific limiters)
   app.use('/auth', authRoutes);
-  app.use("/api/test-email", require("./routes/testEmail"));
+  app.use('/api/auth', authRoutes);
 
   // Session routes with API limiter
   app.use('/session', apiLimiter, sessionRoutes);
+  app.use('/api/session', apiLimiter, sessionRoutes);
 
   // Device routes with API limiter
   app.use('/devices', apiLimiter, deviceRoutes);
+  app.use('/api/devices', apiLimiter, deviceRoutes);
 
   // File routes with API limiter
   app.use('/files', apiLimiter, fileRoutes);
+  app.use('/api/files', apiLimiter, fileRoutes);
 
   // Mobile notes API with API limiter
   app.use('/user/notes', apiLimiter, notesRoutes);
+  app.use('/api/user/notes', apiLimiter, notesRoutes);
 
   // AI routes with API limiter
   app.use('/ai', apiLimiter, aiRoutes);
+  app.use('/api/ai', apiLimiter, aiRoutes);
 
   // Notification routes with API limiter
   app.use('/notifications', apiLimiter, notificationRoutes);
+  app.use('/api/notifications', apiLimiter, notificationRoutes);
 
   // Sync routes with API limiter
   app.use('/sync', apiLimiter, syncRoutes);
+  app.use('/api/sync', apiLimiter, syncRoutes);
 
   // Classroom routes with API limiter
   app.use('/classrooms', apiLimiter, classroomRoutes);
+  app.use('/api/classrooms', apiLimiter, classroomRoutes);
 
   // Admin routes with IP whitelisting (configure allowed IPs in .env)
   const adminAllowedIPs = process.env.ADMIN_ALLOWED_IPS ? process.env.ADMIN_ALLOWED_IPS.split(',') : [];
   if (adminAllowedIPs.length > 0) {
     app.use('/admin', ipWhitelist(adminAllowedIPs), adminRoutes);
+    app.use('/api/admin', ipWhitelist(adminAllowedIPs), adminRoutes);
   } else {
     app.use('/admin', adminRoutes);
+    app.use('/api/admin', adminRoutes);
   }
 
   // Folder routes with API limiter
   app.use('/folders', apiLimiter, folderRoutes);
+  app.use('/api/folders', apiLimiter, folderRoutes);
 
   // 🆕 Free Study Mode
   app.use('/', freeStudyRoutes);
 
   // 🆕 YouTube Search
   app.use('/youtube', apiLimiter, youtubeRoutes);
+  app.use('/api/youtube', apiLimiter, youtubeRoutes);
+
+  // 🆕 Exam Mode
+  app.use('/exams', apiLimiter, examRoutes);
+  app.use('/api/exams', apiLimiter, examRoutes);
 
   // ─── 404 + Error Handlers ─────────────────────────────────────────────────────
   app.use(notFoundHandler);

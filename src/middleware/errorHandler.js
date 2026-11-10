@@ -73,7 +73,7 @@ const errorHandler = (err, req, res, _next) => {
   }
 
   // PostgreSQL errors
-  if (err.code && err.code.startsWith('23')) {
+  if (typeof err.code === 'string' && err.code.startsWith('23')) {
     statusCode = 409;
     message = 'Database constraint violation';
     errorType = 'DatabaseError';
@@ -96,12 +96,26 @@ const errorHandler = (err, req, res, _next) => {
     details.retryAfter = err.retryAfter || 60;
   }
 
+const sanitizeLogData = (data) => {
+  if (!data || typeof data !== 'object') return data;
+  const clone = Array.isArray(data) ? [...data] : { ...data };
+  const sensitiveKeys = ['password', 'confirmpassword', 'token', 'accesstoken', 'refreshtoken', 'otp', 'secret', 'key', 'privatekey'];
+  for (const k of Object.keys(clone)) {
+    if (sensitiveKeys.includes(k.toLowerCase())) {
+      clone[k] = '[REDACTED]';
+    } else if (clone[k] && typeof clone[k] === 'object') {
+      clone[k] = sanitizeLogData(clone[k]);
+    }
+  }
+  return clone;
+};
+
   // Log errors based on severity
   if (statusCode >= 500) {
     logger.error(`[${req.method}] ${req.originalUrl} — ${statusCode}: ${message}`, {
       stack: err.stack,
-      body: req.body,
-      query: req.query,
+      body: sanitizeLogData(req.body),
+      query: sanitizeLogData(req.query),
       params: req.params,
       errorType,
       details,
@@ -113,10 +127,16 @@ const errorHandler = (err, req, res, _next) => {
     });
   }
 
+  // In production, mask internal 500 errors to prevent secret/architecture leaks
+  const isProduction = process.env.NODE_ENV === 'production';
+  const clientMessage = (statusCode >= 500 && isProduction)
+    ? 'An unexpected error occurred. Please try again later.'
+    : message;
+
   // Send error response
   const response = {
     success: false,
-    message,
+    message: clientMessage,
     errorType,
     ...(Object.keys(details).length > 0 && { details }),
     timestamp: new Date().toISOString(),
@@ -124,8 +144,8 @@ const errorHandler = (err, req, res, _next) => {
     method: req.method,
   };
 
-  // Include stack trace in development
-  if (process.env.NODE_ENV === 'development') {
+  // Only include stack trace if explicitly in local development
+  if (process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true') {
     response.stack = err.stack;
   }
 

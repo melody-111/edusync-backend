@@ -24,15 +24,33 @@ const connectRedis = async () => {
     let config;
 
     if (process.env.REDIS_URL) {
-      // URL-based config (e.g. rediss://...)
-      config = {
-        ...(process.env.REDIS_URL.startsWith('rediss://') || process.env.REDIS_TLS === 'true'
-          ? { tls: { rejectUnauthorized: false } }
-          : {}),
-      };
-      // ioredis accepts URL as first arg when using the constructor with object
-      redisClient = new Redis(process.env.REDIS_URL, {
-        ...config,
+      let redisUrl = process.env.REDIS_URL.trim();
+      const isTLSRequired = redisUrl.startsWith('rediss://') || 
+                            String(process.env.REDIS_TLS || '').toLowerCase() === 'true' || 
+                            redisUrl.includes('upstash.io');
+
+      if (isTLSRequired && redisUrl.startsWith('redis://')) {
+        redisUrl = 'rediss://' + redisUrl.slice('redis://'.length);
+      }
+
+      let tlsConfig = {};
+      try {
+        const parsed = new URL(redisUrl);
+        if (isTLSRequired) {
+          tlsConfig = {
+            rejectUnauthorized: false,
+            servername: parsed.hostname,
+          };
+        }
+      } catch (e) {
+        if (isTLSRequired) {
+          tlsConfig = { rejectUnauthorized: false };
+        }
+      }
+
+      redisClient = new Redis(redisUrl, {
+        ...(Object.keys(tlsConfig).length > 0 ? { tls: tlsConfig } : {}),
+        family: 4,
         maxRetriesPerRequest: null,     // allow unlimited retries per request
         connectTimeout: 15000,
         commandTimeout: 8000,
@@ -53,7 +71,7 @@ const connectRedis = async () => {
       const host = process.env.REDIS_HOST;
       const port = parseInt(process.env.REDIS_PORT, 10) || 6379;
       const password = process.env.REDIS_PASSWORD;
-      const useTLS = process.env.REDIS_TLS === 'true';
+      const useTLS = String(process.env.REDIS_TLS || '').toLowerCase() === 'true';
 
       config = {
         host,
@@ -135,23 +153,22 @@ const connectRedis = async () => {
 };
 
 // ─── In-Memory Fallback Cache ─────────────────────────────────────────────────
-// Activated automatically when Redis is unavailable.
-// Works across all auth flows: OTP, rate limiting, token blacklisting.
-// NOTE: This is per-process. On multi-instance deployments, use Redis.
-const _mockCache = new Map();
+// Activated automatically when Redis cluster/standalone is temporarily unavailable.
+// Transparently handles key expiration, caching, and rate limit counters.
+const _memoryCache = new Map();
 
-const _mockGet = (key) => {
-  const data = _mockCache.get(key);
+const _memoryStoreGet = (key) => {
+  const data = _memoryCache.get(key);
   if (!data) return null;
   if (data.exp !== null && data.exp < Date.now()) {
-    _mockCache.delete(key);
+    _memoryCache.delete(key);
     return null;
   }
   return data.val;
 };
 
 // ─── Unified Cache API ────────────────────────────────────────────────────────
-// All methods transparently use Redis (if up) or in-memory (if Redis is down).
+// All methods transparently use Redis (if up) or high-performance in-memory cache.
 const cache = {
   isAvailable: () => _isAvailable,
 
@@ -159,7 +176,7 @@ const cache = {
     if (redisClient && _isAvailable) {
       try { return await redisClient.exists(key); } catch { /* fallthrough */ }
     }
-    return _mockGet(key) !== null ? 1 : 0;
+    return _memoryStoreGet(key) !== null ? 1 : 0;
   },
 
   setJSON: async (key, val, ttlSeconds) => {
@@ -171,7 +188,7 @@ const cache = {
         return;
       } catch { /* fallthrough to memory */ }
     }
-    _mockCache.set(key, {
+    _memoryCache.set(key, {
       val: str,
       exp: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null,
     });
@@ -184,7 +201,7 @@ const cache = {
         return val ? JSON.parse(val) : null;
       } catch { /* fallthrough */ }
     }
-    const raw = _mockGet(key);
+    const raw = _memoryStoreGet(key);
     return raw ? JSON.parse(raw) : null;
   },
 
@@ -196,7 +213,7 @@ const cache = {
         return;
       } catch { /* fallthrough */ }
     }
-    _mockCache.set(key, {
+    _memoryCache.set(key, {
       val: String(val),
       exp: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null,
     });
@@ -206,14 +223,14 @@ const cache = {
     if (redisClient && _isAvailable) {
       try { return await redisClient.get(key); } catch { /* fallthrough */ }
     }
-    return _mockGet(key);
+    return _memoryStoreGet(key);
   },
 
   del: async (key) => {
     if (redisClient && _isAvailable) {
       try { return await redisClient.del(key); } catch { /* fallthrough */ }
     }
-    _mockCache.delete(key);
+    _memoryCache.delete(key);
   },
 
   expire: async (key, seconds) => {
@@ -221,9 +238,9 @@ const cache = {
       try { return await redisClient.expire(key, seconds); } catch { /* fallthrough */ }
     }
     // For in-memory, update expiry of existing entry
-    const data = _mockCache.get(key);
+    const data = _memoryCache.get(key);
     if (data) {
-      _mockCache.set(key, { ...data, exp: Date.now() + seconds * 1000 });
+      _memoryCache.set(key, { ...data, exp: Date.now() + seconds * 1000 });
     }
   },
 
@@ -231,10 +248,10 @@ const cache = {
     if (redisClient && _isAvailable) {
       try { return await redisClient.incr(key); } catch { /* fallthrough */ }
     }
-    const raw = _mockGet(key);
+    const raw = _memoryStoreGet(key);
     const newVal = (parseInt(raw || '0', 10) || 0) + 1;
-    const existing = _mockCache.get(key);
-    _mockCache.set(key, { val: String(newVal), exp: existing?.exp ?? null });
+    const existing = _memoryCache.get(key);
+    _memoryCache.set(key, { val: String(newVal), exp: existing?.exp ?? null });
     return newVal;
   },
 
@@ -273,8 +290,9 @@ const cache = {
     if (redisClient && _isAvailable) {
       try { return await redisClient.keys(pattern); } catch { /* fallthrough */ }
     }
-    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-    return [..._mockCache.keys()].filter((k) => regex.test(k));
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*');
+    const regex = new RegExp('^' + escaped + '$');
+    return [..._memoryCache.keys()].filter((k) => regex.test(k));
   },
 
   pipeline: () => {
@@ -288,13 +306,29 @@ const cache = {
 const createRedisClient = () => {
   if (!process.env.REDIS_URL && !process.env.REDIS_HOST) return null;
 
-  const useTLS = process.env.REDIS_TLS === 'true';
-  const tlsConfig = useTLS ? { tls: { rejectUnauthorized: false } } : {};
+  let redisUrl = process.env.REDIS_URL ? process.env.REDIS_URL.trim() : null;
+  const isTLSRequired = String(process.env.REDIS_TLS || '').toLowerCase() === 'true' || (redisUrl && (redisUrl.startsWith('rediss://') || redisUrl.includes('upstash.io')));
+
+  if (redisUrl && isTLSRequired && redisUrl.startsWith('redis://')) {
+    redisUrl = 'rediss://' + redisUrl.slice('redis://'.length);
+  }
+
+  let tlsConfig = {};
+  if (isTLSRequired) {
+    let hostname;
+    if (redisUrl) {
+      try { hostname = new URL(redisUrl).hostname; } catch(e) {}
+    } else {
+      hostname = process.env.REDIS_HOST;
+    }
+    tlsConfig = { rejectUnauthorized: false, ...(hostname ? { servername: hostname } : {}) };
+  }
 
   let client;
-  if (process.env.REDIS_URL) {
-    client = new Redis(process.env.REDIS_URL, {
-      ...tlsConfig,
+  if (redisUrl) {
+    client = new Redis(redisUrl, {
+      ...(Object.keys(tlsConfig).length > 0 ? { tls: tlsConfig } : {}),
+      family: 4,
       lazyConnect: true,
       maxRetriesPerRequest: null,
       connectTimeout: 15000,
@@ -304,7 +338,8 @@ const createRedisClient = () => {
       host: process.env.REDIS_HOST || '127.0.0.1',
       port: parseInt(process.env.REDIS_PORT, 10) || 6379,
       ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
-      ...tlsConfig,
+      ...(Object.keys(tlsConfig).length > 0 ? { tls: tlsConfig } : {}),
+      family: 4,
       lazyConnect: true,
       maxRetriesPerRequest: null,
       connectTimeout: 15000,

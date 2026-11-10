@@ -18,8 +18,8 @@ const logActivity = (params) => {
     userAgent = null,
   } = params;
 
-  // Fire and forget — never block the request
-  ActivityLog.create({
+  // Fire and forget — never block the request, return promise safely
+  return ActivityLog.create({
     sessionId,
     userId,
     actorRole,
@@ -28,7 +28,9 @@ const logActivity = (params) => {
     details,
     ip,
     userAgent,
-  }).catch((err) => logger.error(`ActivityLog write failed: ${err.message}`));
+  }).catch((err) => {
+    logger.error(`ActivityLog write failed: ${err.message}`);
+  });
 };
 
 /**

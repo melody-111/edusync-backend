@@ -10,6 +10,7 @@ const { getSocketServer } = require('../socket/server');
 const { asyncHandler, sendSuccess, sendError, paginate } = require('../utils/helpers');
 const { logActivity } = require('../utils/activityLogger');
 const { uploadCanvasData, uploadThumbnail, deleteFromCloud, isCloudEnabled, downloadCanvasData } = require('../services/cloudStorage');
+const logger = require('../utils/logger');
 
 // ─── Upload File ───────────────────────────────────────────────────────────────
 const uploadFile = asyncHandler(async (req, res) => {
@@ -112,18 +113,26 @@ const getUserNotes = asyncHandler(async (req, res) => {
     page: parseInt(page, 10),
     limit: parseInt(limit, 10),
     sort: { createdAt: -1 },
-    populate: [
-      { path: 'sessionId', select: 'title status startedAt endedAt' },
-      { path: 'folderId', select: 'name color' },
-    ],
   });
+
+  // Safely find valid folder ObjectIds and populate them
+  const mongoose = require('mongoose');
+  const validFolderIds = files
+    .map(f => f.folderId)
+    .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()));
+
+  const Folder = require('../models/Folder');
+  const folders = validFolderIds.length > 0
+    ? await Folder.find({ _id: { $in: validFolderIds } }).select('name color').lean()
+    : [];
+  const folderMap = new Map(folders.map(f => [f._id.toString(), f]));
 
   // Map folderId object to folderName for easy frontend grouping
   const enriched = files.map(f => {
     const plain = f.toObject ? f.toObject() : f;
-    if (plain.folderId && typeof plain.folderId === 'object') {
-      plain.folderName = plain.folderId.name || null;
-      plain.folderId = plain.folderId._id || plain.folderId;
+    if (plain.folderId && folderMap.has(plain.folderId.toString())) {
+      const folderDoc = folderMap.get(plain.folderId.toString());
+      plain.folderName = folderDoc.name || null;
     }
     return plain;
   });
@@ -260,9 +269,19 @@ const saveNote = asyncHandler(async (req, res) => {
 
   // Resolve Folder: if folderId is valid ObjectId use it, else try resolving by folderName or subject
   let resolvedFolderId = (folderId && folderId !== 'personal_space' && typeof folderId === 'string' && folderId.match(/^[0-9a-fA-F]{24}$/)) ? folderId : null;
-  const folderNameInput = folderName || subject || (folderId && !resolvedFolderId && typeof folderId === 'string' ? folderId : null);
+  let folderNameInput = folderName || subject || (folderId && !resolvedFolderId && typeof folderId === 'string' ? folderId : null);
 
-  if (!resolvedFolderId && folderNameInput && folderNameInput !== 'personal_space' && folderNameInput !== 'session_notes') {
+  const isPersonal = folderId === 'personal_space' ||
+                     fileType === 'personal_space' ||
+                     folderNameInput === 'personal_space' ||
+                     (folderNameInput && folderNameInput.toLowerCase().includes('personal')) ||
+                     (folderNameInput && folderNameInput.toLowerCase().includes('self study'));
+
+  if (isPersonal) {
+    folderNameInput = 'Personal Space / Self Study';
+  }
+
+  if (!resolvedFolderId && folderNameInput && folderNameInput !== 'session_notes') {
     const targetName = folderNameInput.trim();
     let folder = await Folder.findOne({
       ownerId: user._id,
@@ -277,7 +296,7 @@ const saveNote = asyncHandler(async (req, res) => {
           ownerRole: user.role,
           subject: targetName,
           folderType: 'notes',
-          color: req.body.folderColor || '#3b82f6'
+          color: req.body.folderColor || (isPersonal ? '#10b981' : '#3b82f6')
         });
       } catch (err) {
         if (err.code === 11000) {
@@ -292,69 +311,84 @@ const saveNote = asyncHandler(async (req, res) => {
     if (folder) resolvedFolderId = folder._id;
   }
 
-  // ── UPDATE existing note ────────────────────────────────────────────────
+  // ── UPDATE existing note or deduplicate recent save ───────────────────
+  let existingFile = null;
   if (id && id.match(/^[0-9a-fA-F]{24}$/)) {
-    const existingFile = await File.findOne({ _id: id, ownerId: user._id });
-    if (existingFile) {
-      const updateData = { title, updatedAt: new Date() };
-      if (resolvedFolderId) updateData.folderId = resolvedFolderId;
-      
-      if (isBroadcast !== undefined) {
-        updateData.isBroadcast = isBroadcast === true || isBroadcast === 'true';
-        if (req.body.targetClassroom !== undefined) updateData.targetClassroom = req.body.targetClassroom;
-        if (req.body.targetSemester !== undefined) updateData.targetSemester = req.body.targetSemester;
-        if (req.body.targetBranch !== undefined) updateData.targetBranch = req.body.targetBranch;
-      }
+    existingFile = await File.findOne({ _id: id, ownerId: user._id });
+  }
 
-      // Try cloud upload if enabled
-      if (canvasData !== undefined) {
-        if (canvasData && isCloudEnabled()) {
-          // Delete old cloud file if exists
-          if (existingFile.cloudPublicId) {
-            const oldResourceType = existingFile.cloudUrl && existingFile.cloudUrl.includes('/image/') ? 'image' : 'raw';
-            deleteFromCloud(existingFile.cloudPublicId, oldResourceType).catch(() => {});
-          }
+  // Deduplication guard: if no file matched by ID, check if a note with the same title
+  // and folder was created by this user in the last 45 seconds (prevents double-save / race conditions)
+  if (!existingFile && title && title.trim()) {
+    existingFile = await File.findOne({
+      ownerId: user._id,
+      title: title.trim(),
+      folderId: resolvedFolderId || null,
+      createdAt: { $gte: new Date(Date.now() - 45000) },
+      isDeleted: false,
+    }).sort({ createdAt: -1 });
+  }
 
-          const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), id);
-          if (cloudResult) {
-            updateData.cloudUrl = cloudResult.cloudUrl;
-            updateData.cloudPublicId = cloudResult.cloudPublicId;
-            updateData.canvasData = null; // Don't store in MongoDB when cloud is used
-          } else {
-            // Fallback: store in MongoDB
-            updateData.canvasData = canvasData;
-          }
+  if (existingFile) {
+    const updateData = { title, updatedAt: new Date() };
+    if (resolvedFolderId) updateData.folderId = resolvedFolderId;
+    if (isPersonal) updateData.fileType = 'personal_space';
+    
+    if (isBroadcast !== undefined) {
+      updateData.isBroadcast = isBroadcast === true || isBroadcast === 'true';
+      if (req.body.targetClassroom !== undefined) updateData.targetClassroom = req.body.targetClassroom;
+      if (req.body.targetSemester !== undefined) updateData.targetSemester = req.body.targetSemester;
+      if (req.body.targetBranch !== undefined) updateData.targetBranch = req.body.targetBranch;
+    }
+
+    // Try cloud upload if enabled
+    if (canvasData !== undefined) {
+      if (canvasData && isCloudEnabled()) {
+        // Delete old cloud file if exists
+        if (existingFile.cloudPublicId) {
+          const oldResourceType = existingFile.cloudUrl && existingFile.cloudUrl.includes('/image/') ? 'image' : 'raw';
+          deleteFromCloud(existingFile.cloudPublicId, oldResourceType).catch(() => {});
+        }
+
+        const cloudResult = await uploadCanvasData(canvasData, user._id.toString(), existingFile._id.toString());
+        if (cloudResult) {
+          updateData.cloudUrl = cloudResult.cloudUrl;
+          updateData.cloudPublicId = cloudResult.cloudPublicId;
+          updateData.canvasData = null; // Don't store in MongoDB when cloud is used
         } else {
+          // Fallback: store in MongoDB
           updateData.canvasData = canvasData;
         }
-
-        // Upload thumbnail for mobile read-only preview
-        if (thumbnailImage && isCloudEnabled()) {
-          const thumbUrl = await uploadThumbnail(thumbnailImage, user._id.toString(), id);
-          if (thumbUrl) updateData.thumbnailUrl = thumbUrl;
-        }
+      } else {
+        updateData.canvasData = canvasData;
       }
 
-      const file = await File.findOneAndUpdate(
-        { _id: id, ownerId: user._id },
-        updateData,
-        { new: true }
-      );
-      
-      const _io = getSocketServer();
-      if (_io) {
-        _io.to(user._id.toString()).emit('note:sync', { file });
+      // Upload thumbnail for mobile read-only preview
+      if (thumbnailImage && isCloudEnabled()) {
+        const thumbUrl = await uploadThumbnail(thumbnailImage, user._id.toString(), existingFile._id.toString());
+        if (thumbUrl) updateData.thumbnailUrl = thumbUrl;
       }
-      
-      return sendSuccess(res, { file }, 'Note updated');
     }
+
+    const file = await File.findOneAndUpdate(
+      { _id: existingFile._id, ownerId: user._id },
+      updateData,
+      { new: true }
+    );
+    
+    const _io = getSocketServer();
+    if (_io) {
+      _io.to(user._id.toString()).emit('note:sync', { file });
+    }
+    
+    return sendSuccess(res, { file }, 'Note updated');
   }
 
   // ── CREATE new note ─────────────────────────────────────────────────────
   const createData = {
     ownerId: user._id,
     ownerRole: user.role,
-    fileType: fileType || 'notes',
+    fileType: isPersonal ? 'personal_space' : (fileType || 'notes'),
     title: title || 'Untitled Note',
     folderId: resolvedFolderId || null,
     isBroadcast: isBroadcast === true || isBroadcast === 'true',

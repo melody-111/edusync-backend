@@ -9,6 +9,7 @@ const {
   setSessionMedia, getSessionMedia,
   saveSessionProgress,
   refreshQR,
+  alertUpcomingClass,
   startSessionValidation, joinSessionValidation, setMediaValidation,
 
   updateControlsValidation, sessionIdParamValidation, sessionIdIdParamValidation,
@@ -28,6 +29,13 @@ router.post(
   validate,
   auditMiddleware('session.start.api', 'session'),
   startSession
+);
+
+// POST /session/alert-upcoming — teacher notifies students before going live
+router.post(
+  '/alert-upcoming',
+  requireRole('teacher'),
+  alertUpcomingClass
 );
 
 // POST /session/self-start — student starts a self-study session

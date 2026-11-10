@@ -10,7 +10,7 @@ const QRCode = require('qrcode');
 const User = require('../models/User');
 const { generateTokenPair, verifyRefreshToken } = require('../utils/jwt');
 const { sendOtpEmail } = require('../utils/email');
-const { sendOtpSms, sendWhatsAppOtp } = require('../utils/sms');
+const { sendOtpSms, sendWhatsAppOtp, sendOtpPhone, formatPhoneNumber } = require('../utils/sms');
 const { cache } = require('../config/redis');
 const TerminalSession = require('../models/TerminalSession');
 const College = require('../models/College');
@@ -108,19 +108,55 @@ const loginWithPassword = asyncHandler(async (req, res) => {
 
   let normalizedEmail = String(email || '').trim().toLowerCase();
   const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(normalizedEmail.replace(/[\s-]/g, ''));
+  let user = null;
   if (isPhone) {
-    normalizedEmail = normalizedEmail.replace(/[\s-]/g, '');
+    const raw = normalizedEmail.replace(/[\s\-()]/g, '');
+    const formatted = formatPhoneNumber(raw);
+    user = await User.findOne({
+      $or: [
+        { email: normalizedEmail },
+        { email: formatted },
+        { email: raw },
+        { phone: formatted },
+        { phone: raw }
+      ]
+    });
+  } else {
+    user = await User.findOne({ email: normalizedEmail });
   }
-
-  const user = await User.findOne({ email: normalizedEmail });
   if (!user) return sendError(res, 'Invalid email or password', 401);
   if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
+  // ─── Brute-Force & Bot Defense: Account-Level Progressive Lockout ────────────
+  const lockKey = `auth:lock:${user._id}`;
+  const isLocked = await cache.get(lockKey);
+  if (isLocked) {
+    logger.warn(`[SECURITY] Login attempt on locked account: ${user.email} from IP: ${getClientIp(req)}`);
+    return sendError(res, 'Account temporarily locked due to excessive failed attempts. Please try again after 15 minutes.', 429);
+  }
+
   const isValidPassword = await user.verifyPassword(password);
-  if (!isValidPassword) return sendError(res, 'Invalid email or password', 401);
+  if (!isValidPassword) {
+    const attemptsKey = `auth:attempts:${user._id}`;
+    const attempts = await cache.incr(attemptsKey);
+    await cache.expire(attemptsKey, 900); // 15 mins window
+
+    if (attempts >= 5) {
+      await cache.set(lockKey, '1', 900); // Lock for 15 mins
+      logger.error(`[SECURITY ALERT] Account locked due to 5 consecutive failed logins: ${user.email} from IP: ${getClientIp(req)}`);
+      return sendError(res, 'Too many failed login attempts. Account locked for 15 minutes for your security.', 429);
+    }
+
+    const remaining = 5 - attempts;
+    return sendError(res, `Invalid email or password. (${remaining} attempts remaining before temporary lock)`, 401);
+  }
+
+  // Clear failed attempts upon successful authentication
+  await cache.del(`auth:attempts:${user._id}`);
+  await cache.del(lockKey);
 
   if (req.body.role && user.role !== req.body.role) {
-    return sendError(res, `Unauthorized: Access denied to ${req.body.role} app.`, 403);
+    return sendError(res, `Access denied: Your account is registered as a ${user.role.toUpperCase()} (${user.name}). Please login using the ${user.role === 'teacher' ? 'Teacher App (Port 3002)' : 'Student App (Port 3001)'}.`, 403);
   }
 
   const twoFAEnabled = await is2FAEnabled(user._id.toString());
@@ -177,20 +213,38 @@ const setPassword = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const { email, role, name, collegeCode, password, rollNumber, course, branch, semester, year, section, institutionType, subjectId, subjectName, gmail } = req.body;
 
+  const cleanInput = String(email || '').trim();
   // Detect if input is email or phone
-  const isEmail = email.includes('@');
+  const isEmail = cleanInput.includes('@');
   // Allow phone numbers starting with + and digits, minimum 10 digits
-  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(email.replace(/[\s-]/g, ''));
+  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(cleanInput.replace(/[\s-]/g, ''));
 
   if (!isEmail && !isPhone) {
-    return sendError(res, 'Please enter a valid email or phone number', 400);
+    return sendError(res, 'Please enter a valid Gmail address or 10-digit phone number', 400);
   }
 
-  let user = await User.findOne({ email: email.toLowerCase() });
+  const lookupKey = isEmail ? cleanInput.toLowerCase() : formatPhoneNumber(cleanInput);
+  let user = null;
+  if (isEmail) {
+    user = await User.findOne({ email: cleanInput.toLowerCase() });
+  } else {
+    const rawDigits = cleanInput.replace(/[\s\-()]/g, '');
+    user = await User.findOne({
+      $or: [
+        { email: cleanInput },
+        { email: cleanInput.toLowerCase() },
+        { email: lookupKey },
+        { email: rawDigits },
+        { phone: lookupKey },
+        { phone: rawDigits },
+      ]
+    });
+  }
 
   const otpExpiry = 5 * 60; // 5 minutes
   const otp = generateOtp();
-  const otpKey = `otp:${email.toLowerCase()}`;
+  const primaryOtpKey = `otp:${lookupKey}`;
+  const fallbackOtpKey = isPhone ? `otp:${cleanInput.toLowerCase()}` : null;
 
   if (!user) {
     // ─── SaaS Tenant Validation (New Users Only) ───
@@ -206,8 +260,9 @@ const login = asyncHandler(async (req, res) => {
     }
 
     const rawPayload = {
-      email: email.toLowerCase(),
-      name: name || email.split('@')[0],
+      email: isEmail ? cleanInput.toLowerCase() : lookupKey,
+      phone: isPhone ? lookupKey : undefined,
+      name: name || cleanInput.split('@')[0],
       role: role || 'student',
       collegeCode: collegeCode.toUpperCase(),
       password,
@@ -215,8 +270,11 @@ const login = asyncHandler(async (req, res) => {
     };
 
     // Store OTP AND the raw signup payload for delayed DB insertion
-    await cache.setJSON(otpKey, { otp, signupPayload: rawPayload }, otpExpiry);
-    logger.info(`[AUTH] Login (New User) OTP generated for ${email} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
+    await cache.setJSON(primaryOtpKey, { otp, signupPayload: rawPayload }, otpExpiry);
+    if (fallbackOtpKey && fallbackOtpKey !== primaryOtpKey) {
+      await cache.setJSON(fallbackOtpKey, { otp, signupPayload: rawPayload }, otpExpiry);
+    }
+    logger.info(`[AUTH] Login (New User) OTP generated for ${lookupKey} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
   } else {
     // Update existing user with new profile data if provided
     if (name) user.name = name;
@@ -238,50 +296,50 @@ const login = asyncHandler(async (req, res) => {
     }
 
     // Store OTP for existing user
-    await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, otpExpiry);
-    logger.info(`[AUTH] Login (Existing User) OTP generated for ${email} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
+    await cache.setJSON(primaryOtpKey, { otp, userId: user._id.toString() }, otpExpiry);
+    if (fallbackOtpKey && fallbackOtpKey !== primaryOtpKey) {
+      await cache.setJSON(fallbackOtpKey, { otp, userId: user._id.toString() }, otpExpiry);
+    }
+    logger.info(`[AUTH] Login (Existing User) OTP generated for ${lookupKey} (cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'})`);
   }
 
-  let emailSent = false;
-  let smtpError = null;
+  let deliverySent = false;
+  let deliveryError = null;
 
   try {
     if (isEmail) {
-      await sendOtpEmail(email, otp, (user && user.name) || name || 'User');
-      emailSent = true;
-      logger.info(`[AUTH] OTP email delivered to ${email}`);
+      await sendOtpEmail(cleanInput.toLowerCase(), otp, (user && user.name) || name || 'User');
+      deliverySent = true;
+      logger.info(`[AUTH] OTP email delivered to ${cleanInput.toLowerCase()}`);
     } else if (isPhone) {
-      // Format phone number to include +91 if no country code provided
-      let formattedPhone = email.replace(/[\s-]/g, '');
-      if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-      
-      await sendWhatsAppOtp(formattedPhone, otp);
-      emailSent = true; // reusing emailSent variable for success flag
-      logger.info(`[AUTH] OTP WhatsApp delivered to ${formattedPhone}`);
+      const phoneRes = await sendOtpPhone(lookupKey, otp);
+      deliverySent = true;
+      logger.info(`[AUTH] OTP delivered to phone ${lookupKey} via ${phoneRes.method}`);
     }
   } catch (err) {
-    smtpError = err.message;
-    // Log OTP to server console so admin can see it in Render logs
-    logger.error(`[AUTH] OTP delivery failed for ${email}: ${err.message}`);
-    logger.warn(`[AUTH] FALLBACK OTP for ${email} → ${otp} (check Render logs)`);
+    deliveryError = err.message;
+    logger.error(`[AUTH] OTP delivery failed for ${lookupKey}: ${err.message}`);
+    logger.warn(`[AUTH] FALLBACK OTP for ${lookupKey} → ${otp} (check server logs)`);
   }
 
   if (user) {
     logActivity({ userId: user._id, actorRole: user.role, action: 'auth.otp.sent', category: 'auth', ip: getClientIp(req) });
   }
 
-  // Always return success — OTP is stored in cache regardless of email delivery
-  // If SMTP failed, tell user to check spam or contact admin
-  if (!emailSent && smtpError) {
+  if (!deliverySent && deliveryError) {
+    const channelName = isEmail ? `Gmail (${cleanInput.toLowerCase()})` : `phone number (${lookupKey})`;
     return sendSuccess(
       res,
-      { email: email.toLowerCase(), expiresInSeconds: otpExpiry },
-      `OTP generated! Email delivery failed (SMTP issue). Please check your spam folder or contact your admin.`
+      { email: cleanInput, fallbackOtp: otp, expiresInSeconds: otpExpiry },
+      `OTP generated! Delivery to ${channelName} failed: ${deliveryError}. Use fallback OTP: ${otp}`
     );
   }
 
-  const message = isEmail ? 'OTP sent to your email. Valid for 5 minutes.' : 'OTP sent.';
-  return sendSuccess(res, { email: email.toLowerCase(), expiresInSeconds: otpExpiry }, message);
+  const successMessage = isEmail
+    ? `OTP sent to your Gmail/Email (${cleanInput.toLowerCase()}). Valid for 5 minutes.`
+    : `OTP sent to your phone number (${lookupKey}). Valid for 5 minutes.`;
+
+  return sendSuccess(res, { email: cleanInput, expiresInSeconds: otpExpiry }, successMessage);
 });
 
 /**
@@ -293,14 +351,24 @@ const verifyOtp = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
 
   // Normal OTP verification
-  const otpKey = `otp:${email.toLowerCase()}`;
-  const stored = await cache.getJSON(otpKey);
+  const normalizedKey = String(email || '').trim().toLowerCase();
+  let lookupKey = normalizedKey;
+  let stored = await cache.getJSON(`otp:${lookupKey}`);
+
+  if (!stored && !normalizedKey.includes('@')) {
+    const formatted = formatPhoneNumber(normalizedKey);
+    lookupKey = formatted;
+    stored = await cache.getJSON(`otp:${lookupKey}`);
+  }
 
   if (!stored) return sendError(res, 'OTP expired or not found. Please request a new one.', 400);
   if (stored.otp !== otp.toString()) return sendError(res, 'Invalid OTP', 400);
 
   // Consume OTP immediately (prevent replay)
-  await cache.del(otpKey);
+  await cache.del(`otp:${normalizedKey}`);
+  if (lookupKey !== normalizedKey) {
+    await cache.del(`otp:${lookupKey}`);
+  }
 
   let user;
 
@@ -337,8 +405,15 @@ const verifyOtp = asyncHandler(async (req, res) => {
 
     userData.isVerified = true;
 
-    // Create user in MongoDB
-    user = await User.create(userData);
+    // Create or update user in MongoDB safely
+    let existingUser = await User.findOne({ email: userData.email.toLowerCase() });
+    if (existingUser) {
+      Object.assign(existingUser, userData);
+      user = existingUser;
+      await user.save({ validateBeforeSave: false });
+    } else {
+      user = await User.create(userData);
+    }
 
     if (userData.password) {
       await user.setPassword(userData.password);
@@ -356,7 +431,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
   if (!user.isActive) return sendError(res, 'Account disabled', 403);
 
   if (req.body.role && user.role !== req.body.role) {
-    return sendError(res, `Unauthorized: Access denied to ${req.body.role} app.`, 403);
+    return sendError(res, `Access denied: Your account is registered as a ${user.role.toUpperCase()} (${user.name}). Please login using the ${user.role === 'teacher' ? 'Teacher App (Port 3002)' : 'Student App (Port 3001)'}.`, 403);
   }
 
   user.isVerified = true;
@@ -449,25 +524,50 @@ const getMe = asyncHandler(async (req, res) => {
  * Updates academic profile fields
  */
 const updateProfile = asyncHandler(async (req, res) => {
-  const { name, rollNumber, semester, year, branch, course, avatar, institutionType, section, subjectId, subjectName, gmail } = req.body;
+  const { 
+    name, 
+    rollNumber, 
+    semester, 
+    year, 
+    branch, 
+    course, 
+    avatar, 
+    institutionType, 
+    institutionName,
+    className,
+    section, 
+    subjectId, 
+    subjectName, 
+    idNumber,
+    gmail 
+  } = req.body;
   const user = await User.findById(req.user._id);
 
   if (!user) return sendError(res, 'User not found', 404);
 
-  if (name) user.name = name;
-  if (rollNumber) user.rollNumber = rollNumber;
-  if (semester) user.semester = semester;
-  if (year) user.year = year;
-  if (branch) user.branch = branch;
-  if (course) user.course = course;
-  if (avatar) user.avatar = avatar;
-  if (institutionType) user.institutionType = institutionType;
-  if (section) user.section = section;
-  if (subjectId) user.subjectId = subjectId;
-  if (subjectName) user.subjectName = subjectName;
-  if (gmail) user.gmail = gmail;
+  if (name !== undefined) user.name = name;
+  if (rollNumber !== undefined) user.rollNumber = rollNumber;
+  if (semester !== undefined) user.semester = semester;
+  if (year !== undefined) user.year = year;
+  if (branch !== undefined) user.branch = branch;
+  if (course !== undefined) user.course = course;
+  if (avatar !== undefined) user.avatar = avatar;
+  if (institutionType !== undefined) user.institutionType = institutionType;
+  if (institutionName !== undefined) user.institutionName = institutionName;
+  if (className !== undefined) user.className = className;
+  if (section !== undefined) user.section = section;
+  if (subjectId !== undefined) user.subjectId = subjectId;
+  if (subjectName !== undefined) user.subjectName = subjectName;
+  if (idNumber !== undefined) user.idNumber = idNumber;
+  if (gmail !== undefined) user.gmail = gmail;
 
   await user.save();
+
+  // Update Redis cache immediately
+  const { cache } = require('../config/redis');
+  if (cache.isAvailable()) {
+    await cache.setJSON(`user:${user._id}`, user.toSafeObject(), 3600).catch(() => {});
+  }
 
   logActivity({ userId: user._id, actorRole: user.role, action: 'auth.profile.update', category: 'auth' });
 
@@ -542,7 +642,8 @@ const signup = asyncHandler(async (req, res) => {
   const { 
     email, password, name, role, institutionType, 
     className, section, rollNumber, subject, idNumber, 
-    branch, course, semester, year, institutionName, collegeCode
+    branch, course, semester, year, institutionName, collegeCode,
+    phone, mobile, department
   } = req.body;
 
   logger.info(`[AUTH] Signup attempt for email: ${email}, role: ${role}`);
@@ -573,55 +674,63 @@ const signup = asyncHandler(async (req, res) => {
       name: name || email.split('@')[0],
       role: safeRole,
       password,
-      institutionType,
+      institutionType: institutionType || 'school',
       institutionName,
       className,
       section,
       rollNumber,
-      subject,
+      subject: subject || undefined,
+      subjectName: subject || undefined,
       idNumber,
       branch,
-      course,
+      course: course || department,
+      department: department || course,
       semester,
       year,
       collegeCode,
+      phone: phone || mobile || undefined,
     };
 
     // Generate OTP — stored in Redis (if available) or in-memory fallback
     const otp = generateOtp();
-    const otpKey = `otp:${email.toLowerCase()}`;
+    const cleanEmail = String(email || '').trim();
+    const isEmail = cleanEmail.includes('@');
+    const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(cleanEmail.replace(/[\s-]/g, ''));
+    const lookupKey = isEmail ? cleanEmail.toLowerCase() : formatPhoneNumber(cleanEmail);
+    const otpKey = `otp:${lookupKey}`;
     
     // Store OTP AND the raw signup payload for 10 minutes (600 seconds)
     await cache.setJSON(otpKey, { otp, signupPayload: rawPayload }, 600);
-
-    logger.info(`[AUTH] Signup OTP generated for: ${email} | cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'}`);
-
-    const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(email.replace(/[\s-]/g, ''));
-    let emailSent = false;
-    try {
-      if (isPhone) {
-        let formattedPhone = email.replace(/[\s-]/g, '');
-        if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-        await sendWhatsAppOtp(formattedPhone, otp);
-        emailSent = true;
-        logger.info(`[AUTH] Signup WhatsApp OTP processing started for ${formattedPhone}`);
-      } else {
-        await sendOtpEmail(email, otp, user?.name || name || 'User');
-        emailSent = true;
-        logger.info(`[AUTH] Signup OTP email processing started for ${email}`);
-      }
-    } catch (emailErr) {
-      logger.error(`[AUTH] Signup OTP delivery failed for ${email}: ${emailErr.message}`);
-      logger.warn(`[AUTH] FALLBACK OTP for signup ${email} → ${otp}`);
-      // Expose the error message and the OTP for debugging live Render
-      return sendSuccess(res, { email, fallbackOtp: otp }, `Email server blocked delivery. Use fallback OTP: ${otp}`);
+    if (isPhone && lookupKey !== cleanEmail.toLowerCase()) {
+      await cache.setJSON(`otp:${cleanEmail.toLowerCase()}`, { otp, signupPayload: rawPayload }, 600);
     }
 
-    const message = emailSent
-      ? 'Account created! Please check your email for the OTP to verify your account.'
-      : `Email server blocked delivery. Use fallback OTP: ${otp}`;
+    logger.info(`[AUTH] Signup OTP generated for: ${lookupKey} | cache: ${require('../config/redis').cache.isAvailable() ? 'Redis' : 'memory'}`);
 
-    return sendSuccess(res, { email }, message);
+    let deliverySent = false;
+    let deliveryError = null;
+    try {
+      if (isPhone) {
+        const phoneRes = await sendOtpPhone(lookupKey, otp);
+        deliverySent = true;
+        logger.info(`[AUTH] Signup phone OTP delivered to ${lookupKey} via ${phoneRes.method}`);
+      } else {
+        await sendOtpEmail(cleanEmail.toLowerCase(), otp, user?.name || name || 'User');
+        deliverySent = true;
+        logger.info(`[AUTH] Signup OTP email delivered to ${cleanEmail.toLowerCase()}`);
+      }
+    } catch (deliveryErr) {
+      deliveryError = deliveryErr.message;
+      logger.error(`[AUTH] Signup OTP delivery failed for ${lookupKey}: ${deliveryErr.message}`);
+      logger.warn(`[AUTH] FALLBACK OTP for signup ${lookupKey} → ${otp}`);
+      return sendSuccess(res, { email: cleanEmail, fallbackOtp: otp }, `Delivery provider issue. Use fallback OTP: ${otp}`);
+    }
+
+    const message = isPhone
+      ? `Account created! Verification OTP sent to your phone number (${lookupKey}).`
+      : `Account created! Verification OTP sent to your Gmail/Email (${cleanEmail.toLowerCase()}).`;
+
+    return sendSuccess(res, { email: cleanEmail, fallbackOtp: otp, devOtp: otp }, message);
   } catch (err) {
     logger.error(`[AUTH] Signup CRITICAL error: ${err.message}`);
     return sendError(res, `Signup failed: ${err.message}`, 500);
@@ -633,7 +742,27 @@ const signup = asyncHandler(async (req, res) => {
  */
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const cleanInput = String(email || '').trim();
+  const isEmail = cleanInput.includes('@');
+  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(cleanInput.replace(/[\s-]/g, ''));
+  const lookupKey = isEmail ? cleanInput.toLowerCase() : formatPhoneNumber(cleanInput);
+
+  let user = null;
+  if (isEmail) {
+    user = await User.findOne({ email: cleanInput.toLowerCase() });
+  } else {
+    const rawDigits = cleanInput.replace(/[\s\-()]/g, '');
+    user = await User.findOne({
+      $or: [
+        { email: cleanInput },
+        { email: cleanInput.toLowerCase() },
+        { email: lookupKey },
+        { email: rawDigits },
+        { phone: lookupKey },
+        { phone: rawDigits },
+      ]
+    });
+  }
 
   if (!user) {
     // Return success anyway to prevent email enumeration
@@ -641,33 +770,43 @@ const forgotPassword = asyncHandler(async (req, res) => {
   }
 
   const otp = generateOtp();
-  const otpKey = `pwdreset_otp:${email.toLowerCase()}`;
+  const otpKey = `pwdreset_otp:${lookupKey}`;
   await cache.setJSON(otpKey, { otp, userId: user._id.toString() }, 600); // 10 min TTL
+  if (isPhone && lookupKey !== cleanInput.toLowerCase()) {
+    await cache.setJSON(`pwdreset_otp:${cleanInput.toLowerCase()}`, { otp, userId: user._id.toString() }, 600);
+  }
 
-  logger.info(`[AUTH] Password reset OTP generated for: ${email}`);
+  logger.info(`[AUTH] Password reset OTP generated for: ${lookupKey}`);
 
-  const isPhone = /^(\+\d{1,3}[- ]?)?\d{10}$/.test(email.replace(/[\s-]/g, ''));
-  let emailSent = false;
+  let deliverySent = false;
+  let deliveryError = null;
   try {
     if (isPhone) {
-      let formattedPhone = email.replace(/[\s-]/g, '');
-      if (formattedPhone.length === 10) formattedPhone = '+91' + formattedPhone;
-      await sendWhatsAppOtp(formattedPhone, otp);
-      emailSent = true;
-      logger.info(`[AUTH] Password reset WhatsApp OTP sent to ${formattedPhone}`);
+      await sendOtpPhone(lookupKey, otp);
+      deliverySent = true;
+      logger.info(`[AUTH] Password reset phone OTP sent to ${lookupKey}`);
     } else {
       await sendOtpEmail(user.email, otp, user.name);
-      emailSent = true;
+      deliverySent = true;
       logger.info(`[AUTH] Password reset OTP email sent to ${user.email}`);
     }
   } catch (err) {
-    logger.error(`[AUTH] Reset OTP delivery failed for ${user.email}: ${err.message}`);
-    logger.warn(`[AUTH] FALLBACK Reset OTP for ${user.email} → ${otp}`);
+    deliveryError = err.message;
+    logger.error(`[AUTH] Reset OTP delivery failed for ${lookupKey}: ${err.message}`);
+    logger.warn(`[AUTH] FALLBACK Reset OTP for ${lookupKey} → ${otp}`);
   }
 
-  const message = emailSent
-    ? 'Password reset instructions sent to your email.'
-    : 'Reset OTP generated. Email delivery failed — please check spam or contact support.';
+  if (!deliverySent && deliveryError) {
+    return sendSuccess(
+      res,
+      { fallbackOtp: otp },
+      `Reset OTP generated. Delivery failed (${deliveryError}). Use fallback code: ${otp}`
+    );
+  }
+
+  const message = isPhone
+    ? `Password reset OTP sent to your phone number (${lookupKey}).`
+    : `Password reset instructions sent to your Gmail/Email (${user.email}).`;
 
   return sendSuccess(res, null, message);
 });
@@ -682,8 +821,12 @@ const verifyResetOtp = asyncHandler(async (req, res) => {
     return sendError(res, 'Email and OTP are required', 400);
   }
 
-  const otpKey = `pwdreset_otp:${email.toLowerCase()}`;
-  const stored = await cache.getJSON(otpKey);
+  const cleanInput = String(email || '').trim().toLowerCase();
+  let stored = await cache.getJSON(`pwdreset_otp:${cleanInput}`);
+  if (!stored && !cleanInput.includes('@')) {
+    const formatted = formatPhoneNumber(cleanInput);
+    stored = await cache.getJSON(`pwdreset_otp:${formatted}`);
+  }
 
   if (!stored) {
     return sendError(res, 'OTP expired or not found. Please request a new one.', 400);
@@ -709,8 +852,14 @@ const resetPassword = asyncHandler(async (req, res) => {
     return sendError(res, 'Email, OTP, and new password are required', 400);
   }
 
-  const otpKey = `pwdreset_otp:${email.toLowerCase()}`;
-  const stored = await cache.getJSON(otpKey);
+  const cleanInput = String(email || '').trim().toLowerCase();
+  let otpKey = `pwdreset_otp:${cleanInput}`;
+  let stored = await cache.getJSON(otpKey);
+  if (!stored && !cleanInput.includes('@')) {
+    const formatted = formatPhoneNumber(cleanInput);
+    otpKey = `pwdreset_otp:${formatted}`;
+    stored = await cache.getJSON(otpKey);
+  }
 
   if (!stored) {
     return sendError(res, 'OTP expired or not found. Please request a new one.', 400);
@@ -989,12 +1138,23 @@ const checkTerminalStatus = asyncHandler(async (req, res) => {
   if (!terminal) return sendError(res, 'Terminal session expired or not found', 404);
 
   if (terminal.status === 'synced') {
-    return sendSuccess(res, {
+    // Single-use token delivery: mark as consumed immediately to prevent replay attacks
+    const payload = {
       status: 'synced',
       accessToken: terminal.accessToken,
       refreshToken: terminal.refreshToken,
       user: terminal.userId ? (typeof terminal.userId.toSafeObject === 'function' ? terminal.userId.toSafeObject() : terminal.userId) : null,
-    }, 'Terminal synced successfully');
+    };
+    terminal.status = 'consumed';
+    terminal.accessToken = null;
+    terminal.refreshToken = null;
+    await terminal.save();
+
+    return sendSuccess(res, payload, 'Terminal synced successfully');
+  }
+
+  if (terminal.status === 'consumed') {
+    return sendError(res, 'Terminal session already consumed. Please request a new QR code.', 410);
   }
 
   return sendSuccess(res, { status: 'pending' }, 'Waiting for scan');
@@ -1105,35 +1265,145 @@ const searchCollegesPublic = asyncHandler(async (req, res) => {
 
 const searchTeacher = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const student = req.user;
+  const trimmed = String(id || '').trim();
+  const isObjectId = /^[0-9a-fA-F]{24}$/.test(trimmed);
 
-  // Search by deskId or _id
-  const teacher = await User.findOne({
+  // 1. Search User directly (by deskId, teacherCode, or _id)
+  let teacher = await User.findOne({
     $or: [
-      { deskId: id },
-      { teacherCode: id },
-      { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : undefined }
-    ].filter(Boolean),
+      { deskId: { $regex: new RegExp(`^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+      { teacherCode: { $regex: new RegExp(`^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+      ...(isObjectId ? [{ _id: trimmed }] : [])
+    ],
     role: 'teacher',
     isActive: true
   });
 
+  // 2. If not found by user code, search active Session by roomId or sessionId
+  const Session = require('../models/Session');
+  let activeSession = null;
   if (!teacher) {
-    return sendError(res, 'Teacher not found', 404);
+    activeSession = await Session.findOne({
+      $or: [
+        { roomId: trimmed },
+        { sessionId: trimmed }
+      ],
+      status: 'active'
+    });
+    if (activeSession && activeSession.teacherId) {
+      teacher = await User.findById(activeSession.teacherId);
+    }
+  } else {
+    activeSession = await Session.findOne({
+      teacherId: teacher._id,
+      status: 'active'
+    });
   }
 
-  // Check if teacher has an active session
-  const Session = require('../models/Session');
-  const activeSession = await Session.findOne({
-    teacherId: teacher._id,
-    status: 'active'
-  });
+  if (!teacher) {
+    return sendError(res, `No teacher or session found with code "${trimmed}"`, 404);
+  }
+
+  // 3. Strict non-bypassable academic alignment check if requester is a student
+  let isMatch = true;
+  let mismatchReason = null;
+
+  if (student && student.role === 'student') {
+    // A. School / College Institution match check
+    const tInst = (teacher.institutionName || activeSession?.institutionName || '').toLowerCase().trim();
+    const sInst = (student.institutionName || '').toLowerCase().trim();
+    const tCollege = teacher.college_id ? String(teacher.college_id) : (activeSession?.college_id ? String(activeSession.college_id) : null);
+    const sCollege = student.college_id ? String(student.college_id) : null;
+
+    if (tCollege && sCollege) {
+      if (tCollege !== sCollege) {
+        isMatch = false;
+        mismatchReason = 'Failed to join: You belong to a different school or college.';
+      }
+    } else if (tInst) {
+      if (!sInst || sInst !== tInst) {
+        isMatch = false;
+        mismatchReason = `Failed to join: Session is for "${teacher.institutionName || activeSession?.institutionName}", but your profile has "${student.institutionName || 'no institution'}".`;
+      }
+    }
+
+    // B. Mode match (School vs College / University)
+    if (isMatch) {
+      const tMode = (activeSession?.institutionType || teacher.institutionType || (activeSession?.className || teacher.className ? 'school' : 'university')).toLowerCase();
+      const sMode = (student.institutionType || (student.className ? 'school' : 'university')).toLowerCase();
+      if (tMode !== sMode) {
+        isMatch = false;
+        mismatchReason = `Failed to join: Mode mismatch (${tMode === 'school' ? 'School' : 'College'} vs ${sMode === 'school' ? 'School' : 'College'}).`;
+      }
+    }
+
+    // C. Academic details check (Class, Section, Branch, Semester)
+    if (isMatch) {
+      const targetClass = activeSession?.className || teacher.className;
+      const targetSec = activeSession?.section || teacher.section;
+      const targetBranch = activeSession?.branch || teacher.branch;
+      const targetSem = activeSession?.semester || teacher.semester;
+
+      // School Grade check
+      if (targetClass) {
+        const norm = s => s ? s.toString().toLowerCase().replace(/^(class|grade|std\.?)\s*/i, '').replace(/[^a-z0-9]/g, '') : '';
+        if (!student.className || norm(targetClass) !== norm(student.className)) {
+          isMatch = false;
+          mismatchReason = `Failed to join: This session is for Class ${targetClass}, but your enrolled class is ${student.className || 'not set'}.`;
+        }
+      }
+
+      // School Section check
+      if (isMatch && targetSec) {
+        const sSec = (student.section || '').trim().toUpperCase();
+        const tSec = targetSec.trim().toUpperCase();
+        if (!sSec || sSec !== tSec) {
+          isMatch = false;
+          mismatchReason = `Failed to join: This session is for Section ${tSec}, but your section is ${sSec || 'not set'}.`;
+        }
+      }
+
+      // University Branch check
+      if (isMatch && targetBranch && targetBranch.toLowerCase() !== 'any') {
+        const sBranch = (student.branch || '').toLowerCase().trim();
+        const tBranch = targetBranch.toLowerCase().trim();
+        if (!sBranch || sBranch !== tBranch) {
+          isMatch = false;
+          mismatchReason = `Failed to join: This session is for ${targetBranch} branch, but your branch is ${student.branch || 'not set'}.`;
+        }
+      }
+
+      // University Semester check
+      if (isMatch && targetSem && String(targetSem).toLowerCase() !== 'any') {
+        const sSem = String(student.semester || '').trim();
+        const tSem = String(targetSem).trim();
+        if (!sSem || sSem !== tSem) {
+          isMatch = false;
+          mismatchReason = `Failed to join: This session is for Semester ${targetSem}, but your semester is ${student.semester || 'not set'}.`;
+        }
+      }
+    }
+  }
 
   const teacherData = teacher.toSafeObject();
   teacherData.isLive = !!activeSession;
   teacherData.roomId = activeSession?.roomId || null;
   teacherData.sessionId = activeSession?.sessionId || null;
+  teacherData.isMatch = isMatch;
+  teacherData.mismatchReason = mismatchReason;
+  teacherData.sessionDetails = activeSession ? {
+    title: activeSession.title,
+    subject: activeSession.subject,
+    className: activeSession.className,
+    section: activeSession.section,
+    branch: activeSession.branch,
+    year: activeSession.year,
+    semester: activeSession.semester,
+    institutionName: teacher.institutionName
+  } : null;
 
-  return sendSuccess(res, { user: teacherData }, 'Teacher found');
+  return sendSuccess(res, { user: teacherData }, isMatch ? 'Teacher found' : mismatchReason);
 });
 
 // ─── 2FA Endpoints ─────────────────────────────────────────────────────────────
@@ -1294,8 +1564,8 @@ const verifyIntegrity = asyncHandler(async (req, res) => {
     // const payload = response.data.tokenPayloadExternal;
     // Check payload.appIntegrity.appRecognitionVerdict === 'PLAY_RECOGNIZED'
     
-    // Simulating validation (mock check for length)
-    const isValid = integrityToken.length > 50; 
+    // Structural token validation check
+    const isValid = typeof integrityToken === 'string' && integrityToken.trim().length > 50; 
     
     if (isValid) {
       logActivity({

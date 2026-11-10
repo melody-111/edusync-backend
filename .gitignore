@@ -1,5 +1,7 @@
 node_modules/
 .env
+.env.local
+.env.*.local
 uploads/
 exports/
 logs/
@@ -8,3 +10,8 @@ logs/
 coverage/
 dist/
 firebase-service-account.json
+serviceAccountKey.json
+*.pem
+*.key
+*.traineddata
+scratch/

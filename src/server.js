@@ -29,6 +29,11 @@ const start = async () => {
   const app = createApp();
   const httpServer = http.createServer(app);
 
+  // ─── LPDoS & Slowloris Hardening: Connection & Header Timeouts ─────────────
+  httpServer.headersTimeout = 65000;
+  httpServer.requestTimeout = 30000;
+  httpServer.keepAliveTimeout = 61000;
+
   // ─── Initialize Socket.io ─────────────────────────────────────────────────
   await initSocketServer(httpServer);
 

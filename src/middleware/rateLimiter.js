@@ -8,26 +8,27 @@ const { sendError } = require('../utils/helpers');
  * Supports Cloudflare IP headers automatically.
  */
 const createLimiter = (windowMs, max, message) => {
-  // Disable rate limiting ONLY if explicitly in Dev mode with OTP bypass on
-  if (process.env.DEV_MODE === 'true' && process.env.DEV_OTP_BYPASS === 'true') {
-    return (req, res, next) => next();
-  }
-  
   return rateLimit({
     windowMs,
-    max,
+    max: (req) => {
+      // Allow generous headroom on localhost / loopback during developer testing & campus NAT
+      const ip = req.ip || req.connection?.remoteAddress || '';
+      const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip.includes('localhost');
+      if (isLoopback) return 500;
+      return max;
+    },
     standardHeaders: true,
     legacyHeaders: false,
     handler: (req, res) => {
-      sendError(res, 429, message || 'Too many requests. Please try again later.');
+      sendError(res, message || 'Too many requests. Please try again later.', 429);
     }
   });
 };
 
-// Auth endpoints — Strict to prevent brute-force and spam
+// Auth endpoints — Generous on IP to support campus Wi-Fi / NAT, while protected by Account-Level Lockout
 const authLimiter = createLimiter(
   15 * 60 * 1000, // 15 min
-  5,              // Allow 5 attempts before 15-minute block
+  100, // 100 per 15 min per IP to prevent NAT starvation
   'Too many login attempts. Your IP has been temporarily blocked for 15 minutes.'
 );
 

@@ -20,7 +20,6 @@ const sessionSchema = new mongoose.Schema(
     roomId: {
       type: String,
       default: () => `room_${uuidv4()}`,
-      unique: true,
       index: true,
     },
     teacherId: {
@@ -59,6 +58,9 @@ const sessionSchema = new mongoose.Schema(
     semester: { type: String, default: null },
     className: { type: String, default: null },
     section: { type: String, default: null },
+    institutionName: { type: String, trim: true, default: null },
+    institutionType: { type: String, enum: ['school', 'college', 'university'], default: null },
+    isBroadcasting: { type: Boolean, default: false },
 
     // Library Integration
     folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },

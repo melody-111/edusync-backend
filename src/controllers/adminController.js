@@ -42,7 +42,7 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
   if (isActive !== undefined) filter.isActive = isActive === 'true';
   if (college_id) {
     if (mongoose.isValidObjectId(college_id)) filter.college_id = college_id;
-    else filter.institutionName = new RegExp('^' + college_id + '$', 'i'); // fallback to name matching
+    else filter.institutionName = new RegExp('^' + String(college_id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'); // fallback to safe regex
   }
   
   // Ensure unverified users do not appear in the admin dashboard until they verify their OTP
@@ -160,7 +160,7 @@ exports.createCollege = asyncHandler(async (req, res) => {
   // Generate a clean unique code (e.g., DPS-101)
   const firstWord = name.split(' ')[0].toUpperCase().replace(/[^A-Z]/g, '') || 'COL';
   const prefix = firstWord.substring(0, 4);
-  const existingCount = await College.countDocuments({ collegeCode: new RegExp('^' + prefix, 'i') });
+  const existingCount = await College.countDocuments({ collegeCode: new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });
   const collegeCode = `${prefix}-${101 + existingCount}`;
 
   const college = await College.create({

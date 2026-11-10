@@ -13,16 +13,12 @@ services:
       # Database (Update with production MongoDB URI)
       - key: MONGODB_URI
         value: mongodb+srv://Divyansh:Divyansh@trial.qjmankx.mongodb.net/digital_classroom?retryWrites=true&w=majority
-      # Redis (Use Render Redis addon for production)
-      - key: REDIS_HOST
-        value: redis-10774.c263.us-east-1-2.ec2.cloud.redislabs.com
-      - key: REDIS_PORT
-        value: "10774"
-      - key: REDIS_PASSWORD
-        value: tNwhDw2V0k2CB7XCEADBGZELfe9DUkVH
+      # Redis (Upstash Cloud Serverless Redis)
+      - key: REDIS_URL
+        value: rediss://default:gQAAAAAAAlQ6AAIgcDIwMzAwYzhkNDVlN2I0ODUxYjUyZWQxNjdhM2YzYjdmMQ@mint-ostrich-152634.upstash.io:6379
       - key: REDIS_TLS
         value: "true"
-      # JWT Secrets
+      # JWT & Encryption Secrets
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
@@ -31,6 +27,12 @@ services:
         value: 7d
       - key: JWT_REFRESH_EXPIRES_IN
         value: 30d
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: ADMIN_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: sudhanshu@edusync.com
       # OTP & QR Secrets
       - key: OTP_SECRET
         generateValue: true
@@ -53,21 +55,21 @@ services:
       - key: SMTP_SECURE
         value: "false"
       - key: SMTP_USER
-        value: sudhanshusonkar210@gmail.com
+        sync: false
       - key: SMTP_PASS
-        value: "lscsqhdoxrxdngdp"
+        sync: false
       - key: EMAIL_FROM
         value: "Digital Classroom <noreply@classroom.app>"
       # AI API
       - key: AI_API_KEY
-        value: your_ai_api_key
+        sync: false
       - key: AI_API_BASE_URL
         value: https://api.openai.com/v1
       - key: AI_MODEL
         value: gpt-4o
       # YouTube API
       - key: YOUTUBE_API_KEY
-        value: your_youtube_api_key
+        sync: false
       # Firebase (Push Notifications)
       - key: FIREBASE_SERVICE_ACCOUNT_PATH
         value: ./firebase-service-account.json
@@ -86,3 +88,26 @@ services:
       # Socket.io
       - key: SOCKET_CORS_ORIGIN
         value: https://your-frontend-domain.com
+      # Cloud Storage (Cloudinary)
+      - key: CLOUD_STORAGE_ENABLED
+        value: "true"
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      # Twilio SMS
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      # Dev Mode (Disabled)
+      - key: DEV_MODE
+        value: "false"
+      - key: DEV_OTP_BYPASS
+        value: "false"
